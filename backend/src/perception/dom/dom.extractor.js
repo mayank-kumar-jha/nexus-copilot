@@ -36,8 +36,11 @@ class DomExtractor {
         const getLabel = (el) => {
           if (el.getAttribute('aria-label')) return el.getAttribute('aria-label').trim();
           if (el.id) {
-            const label = document.querySelector(`label[for="${el.id}"]`);
-            if (label) return label.textContent.trim();
+            try {
+              const safeId = window.CSS && CSS.escape ? CSS.escape(el.id) : el.id.replace(/["\\]/g, '\\$&');
+              const label = document.querySelector(`label[for="${safeId}"]`);
+              if (label) return label.textContent.trim();
+            } catch {}
           }
           if (el.placeholder) return el.placeholder.trim();
           const text = el.textContent?.trim();
@@ -54,7 +57,7 @@ class DomExtractor {
             : (el.closest('a[href]') || el.querySelector('a[href]'));
 
           if (anchor) {
-            if (anchor.id && !anchor.id.includes(' ') && !anchor.id.startsWith('__')) {
+            if (anchor.id && !/[\s"':<>()\\[\\]#=,.]/.test(anchor.id) && !anchor.id.startsWith('__')) {
               return `#${anchor.id}`;
             }
             const href = anchor.getAttribute('href');
@@ -73,7 +76,7 @@ class DomExtractor {
             if (cleanTitle.length < 100) return `[title="${cleanTitle}"]`;
           }
 
-          if (el.id && !el.id.includes(' ') && !el.id.startsWith('__')) {
+          if (el.id && !/[\s"':<>()\\[\\]#=,.]/.test(el.id) && !el.id.startsWith('__')) {
             return `#${el.id}`;
           }
 
