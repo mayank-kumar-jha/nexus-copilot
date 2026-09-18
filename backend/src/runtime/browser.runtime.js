@@ -44,10 +44,13 @@ class BrowserRuntime {
       } catch {}
     }
 
+    const userDataDir = path.resolve(__dirname, '../../user-data');
+    if (!fs.existsSync(userDataDir)) {
+      fs.mkdirSync(userDataDir, { recursive: true });
+    }
+
     const launchArgs = [
       '--start-maximized',
-      '--window-position=50,50',
-      '--window-size=1280,800',
       '--no-sandbox',
       '--disable-setuid-sandbox',
       '--disable-blink-features=AutomationControlled',
@@ -55,33 +58,45 @@ class BrowserRuntime {
       '--no-default-browser-check',
       '--disable-popup-blocking',
       '--disable-notifications',
-      '--new-window',
     ];
 
+    const launchOptions = {
+      headless: false,
+      viewport: null,
+      args: launchArgs,
+      slowMo: config.browser.slowMo || 200,
+      userAgent:
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+        '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    };
+
+    // Strategy 1: Launch Persistent Google Chrome (loads saved accounts, ChatGPT, Google, logins)
     try {
-      const browser = await chromium.launch({
-        headless: false,
-        args: launchArgs,
-        slowMo: config.browser.slowMo || 200,
-      });
-      this._browser = browser;
-      this._context = await browser.newContext({
-        viewport: null,
-      });
-      console.log('[BrowserRuntime] Launched visible browser window.');
-    } catch (err) {
-      console.warn('[BrowserRuntime] Primary launch notice, trying Chrome channel:', err.message);
-      const browser = await chromium.launch({
-        headless: false,
+      this._context = await chromium.launchPersistentContext(userDataDir, {
+        ...launchOptions,
         channel: 'chrome',
-        args: launchArgs,
-        slowMo: config.browser.slowMo || 200,
       });
-      this._browser = browser;
-      this._context = await browser.newContext({
-        viewport: null,
-      });
-      console.log('[BrowserRuntime] Launched visible Chrome channel browser window.');
+      console.log('[BrowserRuntime] Launched persistent Google Chrome window (profile: user-data).');
+    } catch (err1) {
+      console.warn('[BrowserRuntime] Persistent Chrome profile notice:', err1.message);
+
+      // Strategy 2: Persistent Bundled Chromium (if Google Chrome channel missing or locked)
+      try {
+        this._context = await chromium.launchPersistentContext(userDataDir, launchOptions);
+        console.log('[BrowserRuntime] Launched persistent Chromium window.');
+      } catch (err2) {
+        console.warn('[BrowserRuntime] Profile lock fallback, launching fresh session:', err2.message);
+
+        // Strategy 3: Fresh standalone browser instance with isolated temp profile
+        const tempProfile = path.join(require('os').tmpdir(), `nexus-session-${Date.now()}`);
+        this._context = await chromium.launchPersistentContext(tempProfile, {
+          ...launchOptions,
+          channel: 'chrome',
+        }).catch(async () => {
+          return await chromium.launchPersistentContext(tempProfile, launchOptions);
+        });
+        console.log('[BrowserRuntime] Launched standalone visible browser window.');
+      }
     }
 
     this._context.on('close', () => {

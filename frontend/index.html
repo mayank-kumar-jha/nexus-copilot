@@ -1820,7 +1820,7 @@
         fetch(`${API_URL}/agent/tasks/${prevTaskId}/cancel`, { method: 'POST' }).catch(() => {});
       }
 
-      const sessionId = 'nexus-' + Date.now();
+      const sessionId = 'nexus-desktop-session';
 
       try {
         const res = await fetch(`${API_URL}/agent/run`, {
