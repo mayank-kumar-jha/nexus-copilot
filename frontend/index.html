@@ -1,0 +1,2000 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Nexus • Autonomous AI Assistant</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet" />
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+  <style>
+    :root {
+      --panel-bg: rgba(13, 15, 26, 0.95);
+      --panel-border: rgba(255, 255, 255, 0.12);
+      --panel-border-focus: rgba(168, 85, 247, 0.55);
+      
+      --nexus-violet: #a855f7;
+      --nexus-indigo: #6366f1;
+      --nexus-cyan: #06b6d4;
+      --nexus-emerald: #10b981;
+      --nexus-amber: #f59e0b;
+      --nexus-rose: #f43f5e;
+      
+      --glow-violet: rgba(168, 85, 247, 0.25);
+      --glow-cyan: rgba(6, 182, 212, 0.25);
+      --glow-emerald: rgba(16, 185, 129, 0.25);
+      --glow-amber: rgba(245, 158, 11, 0.25);
+      --glow-rose: rgba(244, 63, 94, 0.25);
+
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --text-dim: #64748b;
+      --font-main: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      scrollbar-width: none !important;
+      -ms-overflow-style: none !important;
+    }
+
+    *::-webkit-scrollbar {
+      display: none !important;
+      width: 0;
+      height: 0;
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      background: transparent !important;
+      font-family: var(--font-main);
+      color: var(--text-main);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      margin: 0;
+      padding: 0;
+    }
+
+    /* Floating Island / Notch Wrapper */
+    .nexus-island-wrapper {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      padding: 6px 14px;
+      overflow: visible;
+    }
+
+    /* ─── Compact Pill Notch (Idle / Collapsed Desktop Overlay) ─── */
+    .nexus-pill {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      height: 40px;
+      padding: 0 14px 0 8px;
+      background: rgba(14, 17, 29, 0.96);
+      backdrop-filter: blur(28px) saturate(200%);
+      -webkit-backdrop-filter: blur(28px) saturate(200%);
+      border: 1px solid var(--panel-border);
+      border-radius: 9999px;
+      box-shadow: 
+        0 4px 14px rgba(0, 0, 0, 0.45),
+        0 0 0 1px rgba(255, 255, 255, 0.08),
+        0 0 10px rgba(168, 85, 247, 0.15);
+      cursor: pointer;
+      transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+      -webkit-app-region: drag;
+    }
+
+    .nexus-pill:hover {
+      border-color: rgba(168, 85, 247, 0.45);
+      box-shadow: 
+        0 6px 18px rgba(0, 0, 0, 0.55),
+        0 0 0 1px rgba(168, 85, 247, 0.3),
+        0 0 14px rgba(168, 85, 247, 0.22);
+      transform: translateY(1px);
+    }
+
+    .nexus-pill.hidden {
+      display: none !important;
+    }
+
+    /* Orb / Core Logo with Listening Sound Waves */
+    .nexus-orb {
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #c084fc 0%, #6366f1 50%, #06b6d4 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 0 10px var(--glow-violet);
+      position: relative;
+      flex-shrink: 0;
+      transition: all 0.3s ease;
+      -webkit-app-region: no-drag;
+    }
+
+    .nexus-orb svg {
+      width: 13px;
+      height: 13px;
+      fill: #ffffff;
+      filter: drop-shadow(0 1px 2px rgba(0,0,0,0.3));
+    }
+
+    .nexus-orb::after {
+      content: '';
+      position: absolute;
+      inset: -2px;
+      border-radius: 50%;
+      background: inherit;
+      filter: blur(4px);
+      opacity: 0.4;
+      z-index: -1;
+      animation: orb-pulse 3s infinite ease-in-out;
+    }
+
+    .nexus-orb.listening {
+      background: linear-gradient(135deg, #38bdf8 0%, #a855f7 100%);
+      box-shadow: 0 0 16px rgba(56, 189, 248, 0.6);
+      animation: listening-ripple 1.2s infinite ease-in-out;
+    }
+
+    @keyframes orb-pulse {
+      0%, 100% { opacity: 0.3; transform: scale(1); }
+      50% { opacity: 0.65; transform: scale(1.15); }
+    }
+
+    @keyframes listening-ripple {
+      0% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.6), 0 0 10px rgba(168, 85, 247, 0.4); }
+      70% { box-shadow: 0 0 0 10px rgba(56, 189, 248, 0), 0 0 20px rgba(168, 85, 247, 0.6); }
+      100% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0), 0 0 10px rgba(168, 85, 247, 0.4); }
+    }
+
+    /* Status Text in Pill */
+    .pill-content {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      -webkit-app-region: no-drag;
+    }
+
+    .pill-title {
+      font-weight: 700;
+      font-size: 13px;
+      letter-spacing: 0.02em;
+      background: linear-gradient(135deg, #ffffff 40%, #c4b5fd 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .pill-divider {
+      width: 3px;
+      height: 3px;
+      border-radius: 50%;
+      background: var(--text-dim);
+    }
+
+    .pill-status {
+      font-size: 11.5px;
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+      font-weight: 500;
+      max-width: 160px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .pill-shortcut {
+      display: flex;
+      align-items: center;
+      gap: 2px;
+      font-family: var(--font-mono);
+      font-size: 9.5px;
+      color: var(--text-dim);
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.09);
+      border-radius: 5px;
+      padding: 1px 5px;
+      margin-left: 2px;
+    }
+
+    /* ─── Expanded Desktop Assistant Card ─── */
+    .nexus-assistant {
+      width: 100%;
+      max-width: 560px;
+      background: var(--panel-bg);
+      backdrop-filter: blur(32px) saturate(200%);
+      -webkit-backdrop-filter: blur(32px) saturate(200%);
+      border: 1px solid var(--panel-border);
+      border-radius: 18px;
+      box-shadow: 
+        0 10px 24px rgba(0, 0, 0, 0.55),
+        0 0 0 1px rgba(255, 255, 255, 0.08),
+        0 0 16px rgba(168, 85, 247, 0.15);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      transform-origin: top center;
+      transition: opacity 0.25s cubic-bezier(0.16, 1, 0.3, 1), transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .nexus-assistant.collapsed {
+      display: none !important;
+    }
+
+    /* Assistant Header (Draggable) */
+    .assistant-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 9px 14px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+      background: rgba(0, 0, 0, 0.3);
+      -webkit-app-region: drag;
+    }
+
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      -webkit-app-region: no-drag;
+    }
+
+    .header-title-box {
+      display: flex;
+      flex-direction: column;
+      gap: 1px;
+    }
+
+    .header-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }
+
+    .state-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-family: var(--font-mono);
+      font-size: 10px;
+      font-weight: 600;
+      padding: 2px 7px;
+      border-radius: 9999px;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      transition: all 0.3s ease;
+    }
+
+    /* 8 Agent State Themes */
+    .state-idle {
+      background: rgba(148, 163, 184, 0.12);
+      color: #cbd5e1;
+      border: 1px solid rgba(148, 163, 184, 0.25);
+    }
+    .state-idle .state-dot { background: #94a3b8; }
+
+    .state-listening {
+      background: rgba(56, 189, 248, 0.18);
+      color: #38bdf8;
+      border: 1px solid rgba(56, 189, 248, 0.45);
+      box-shadow: 0 0 10px rgba(56, 189, 248, 0.25);
+    }
+    .state-listening .state-dot { background: #38bdf8; box-shadow: 0 0 8px #38bdf8; animation: pulse-glow 0.8s infinite; }
+
+    .state-transcribing {
+      background: rgba(168, 85, 247, 0.18);
+      color: #c084fc;
+      border: 1px solid rgba(168, 85, 247, 0.45);
+    }
+    .state-transcribing .state-dot { background: #c084fc; box-shadow: 0 0 8px #c084fc; animation: pulse-glow 0.6s infinite; }
+
+    .state-thinking {
+      background: rgba(168, 85, 247, 0.18);
+      color: #c084fc;
+      border: 1px solid rgba(168, 85, 247, 0.4);
+    }
+    .state-thinking .state-dot { background: #c084fc; box-shadow: 0 0 6px #c084fc; animation: pulse-glow 1.2s infinite; }
+
+    .state-acting {
+      background: rgba(245, 158, 11, 0.18);
+      color: #fbbf24;
+      border: 1px solid rgba(245, 158, 11, 0.4);
+    }
+    .state-acting .state-dot { background: #f59e0b; box-shadow: 0 0 6px #f59e0b; animation: pulse-glow 1s infinite; }
+
+    .state-verifying {
+      background: rgba(6, 182, 212, 0.18);
+      color: #22d3ee;
+      border: 1px solid rgba(6, 182, 212, 0.4);
+    }
+    .state-verifying .state-dot { background: #06b6d4; box-shadow: 0 0 6px #06b6d4; animation: pulse-glow 1.4s infinite; }
+
+    .state-waiting {
+      background: rgba(244, 63, 94, 0.2);
+      color: #fda4af;
+      border: 1px solid rgba(244, 63, 94, 0.5);
+      animation: pulse-border 1.5s infinite;
+    }
+    .state-waiting .state-dot { background: #f43f5e; box-shadow: 0 0 8px #f43f5e; animation: pulse-glow 0.8s infinite; }
+
+    .state-completed {
+      background: rgba(16, 185, 129, 0.18);
+      color: #34d399;
+      border: 1px solid rgba(16, 185, 129, 0.4);
+    }
+    .state-completed .state-dot { background: #10b981; box-shadow: 0 0 6px #10b981; }
+
+    .state-error {
+      background: rgba(239, 68, 68, 0.18);
+      color: #fca5a5;
+      border: 1px solid rgba(239, 68, 68, 0.4);
+    }
+    .state-error .state-dot { background: #ef4444; box-shadow: 0 0 6px #ef4444; }
+
+    .state-dot {
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+
+    @keyframes pulse-glow {
+      0%, 100% { opacity: 0.6; transform: scale(0.9); }
+      50% { opacity: 1; transform: scale(1.3); }
+    }
+
+    @keyframes pulse-border {
+      0%, 100% { border-color: rgba(244, 63, 94, 0.4); }
+      50% { border-color: rgba(244, 63, 94, 0.9); box-shadow: 0 0 12px var(--glow-rose); }
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      -webkit-app-region: no-drag;
+    }
+
+    /* Wake Word Toggle Badge */
+    .wake-badge {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 6px;
+      padding: 3px 7px;
+      font-size: 10px;
+      font-family: var(--font-mono);
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .wake-badge:hover {
+      background: rgba(255, 255, 255, 0.1);
+      color: var(--text-main);
+    }
+
+    .wake-badge.active {
+      color: var(--nexus-emerald);
+      border-color: rgba(16, 185, 129, 0.3);
+    }
+
+    .wake-dot {
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: var(--text-dim);
+    }
+
+    .wake-badge.active .wake-dot {
+      background: var(--nexus-emerald);
+      box-shadow: 0 0 6px var(--nexus-emerald);
+    }
+
+    .icon-btn {
+      width: 24px;
+      height: 24px;
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.09);
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .icon-btn:hover {
+      background: rgba(255, 255, 255, 0.12);
+      border-color: rgba(255, 255, 255, 0.22);
+      color: var(--text-main);
+      transform: scale(1.05);
+    }
+
+    .icon-btn svg {
+      width: 12px;
+      height: 12px;
+      stroke: currentColor;
+    }
+
+    /* Terminate Button */
+    .btn-terminate {
+      display: none;
+      align-items: center;
+      gap: 5px;
+      background: rgba(244, 63, 94, 0.15);
+      border: 1px solid rgba(244, 63, 94, 0.45);
+      color: #fda4af;
+      border-radius: 7px;
+      padding: 3px 8px;
+      font-family: var(--font-mono);
+      font-size: 10.5px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      -webkit-app-region: no-drag;
+    }
+
+    .btn-terminate:hover {
+      background: rgba(244, 63, 94, 0.3);
+      border-color: rgba(244, 63, 94, 0.8);
+      color: #fff;
+    }
+
+    .btn-terminate .stop-sq {
+      width: 5px;
+      height: 5px;
+      background: #f43f5e;
+      border-radius: 1px;
+    }
+
+    /* ─── Input Row & Mic Control ─── */
+    .input-section {
+      padding: 10px 14px 6px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+    }
+
+    .input-container {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(8, 10, 18, 0.8);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 11px;
+      padding: 4px 6px 4px 10px;
+      transition: all 0.25s ease;
+    }
+
+    .input-container:focus-within {
+      border-color: var(--panel-border-focus);
+      box-shadow: 0 0 14px -2px var(--glow-violet);
+      background: rgba(10, 12, 22, 0.95);
+    }
+
+    .goal-input {
+      flex: 1;
+      background: transparent;
+      border: none;
+      outline: none;
+      font-family: inherit;
+      font-size: 13.5px;
+      color: var(--text-main);
+      line-height: 1.4;
+      user-select: text;
+    }
+
+    .goal-input::placeholder {
+      color: var(--text-dim);
+      font-weight: 300;
+    }
+
+    /* Mic Trigger Button */
+    .mic-btn {
+      width: 28px;
+      height: 28px;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .mic-btn:hover {
+      background: rgba(56, 189, 248, 0.15);
+      border-color: rgba(56, 189, 248, 0.4);
+      color: #38bdf8;
+    }
+
+    .mic-btn.listening {
+      background: rgba(56, 189, 248, 0.25);
+      border-color: rgba(56, 189, 248, 0.8);
+      color: #38bdf8;
+      animation: mic-pulse 1s infinite;
+    }
+
+    @keyframes mic-pulse {
+      0% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.5); }
+      70% { box-shadow: 0 0 0 6px rgba(56, 189, 248, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0); }
+    }
+
+    .mic-btn svg {
+      width: 13px;
+      height: 13px;
+      stroke: currentColor;
+    }
+
+    .submit-btn {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      background: linear-gradient(135deg, #a855f7 0%, #6366f1 100%);
+      color: #ffffff;
+      border: none;
+      border-radius: 7px;
+      padding: 5px 11px;
+      font-size: 11px;
+      font-weight: 600;
+      font-family: var(--font-mono);
+      cursor: pointer;
+      box-shadow: 0 2px 8px rgba(168, 85, 247, 0.3);
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .submit-btn:hover:not(:disabled) {
+      transform: translateY(-1px);
+      box-shadow: 0 3px 12px rgba(168, 85, 247, 0.45);
+    }
+
+    .submit-btn:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+      filter: grayscale(0.5);
+    }
+
+    .submit-btn svg {
+      width: 10px;
+      height: 10px;
+      stroke: currentColor;
+    }
+
+    /* Suggestions Row */
+    .suggestions-container {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      overflow-x: auto;
+      padding-bottom: 2px;
+    }
+
+    .suggestion-chip {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.07);
+      border-radius: 9999px;
+      padding: 3px 9px;
+      font-size: 10px;
+      color: var(--text-muted);
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.2s ease;
+    }
+
+    .suggestion-chip:hover {
+      background: rgba(255, 255, 255, 0.08);
+      border-color: rgba(168, 85, 247, 0.3);
+      color: var(--text-main);
+      transform: translateY(-1px);
+    }
+
+    /* ─── Pipeline Status Ribbon ─── */
+    .pipeline-ribbon {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 5px 14px;
+      background: rgba(0, 0, 0, 0.35);
+      border-top: 1px solid rgba(255, 255, 255, 0.04);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+      font-size: 10px;
+    }
+
+    .stage-steps {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .stage-node {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid transparent;
+      color: var(--text-dim);
+      font-weight: 500;
+      transition: all 0.25s ease;
+    }
+
+    .stage-node.active {
+      color: #fff;
+      background: rgba(168, 85, 247, 0.15);
+      border-color: rgba(168, 85, 247, 0.35);
+      box-shadow: 0 0 8px var(--glow-violet);
+    }
+
+    .stage-node.done {
+      color: var(--nexus-emerald);
+      background: rgba(16, 185, 129, 0.08);
+      border-color: rgba(16, 185, 129, 0.2);
+    }
+
+    .stage-dot {
+      width: 4px;
+      height: 4px;
+      border-radius: 50%;
+      background: var(--text-dim);
+    }
+
+    .stage-node.active .stage-dot {
+      background: var(--nexus-violet);
+      box-shadow: 0 0 5px var(--nexus-violet);
+      animation: pulse-glow 1.2s infinite;
+    }
+
+    .stage-node.done .stage-dot {
+      background: var(--nexus-emerald);
+    }
+
+    .conn-info {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-family: var(--font-mono);
+      font-size: 9.5px;
+      color: var(--nexus-emerald);
+    }
+
+    .conn-pulse {
+      width: 4px;
+      height: 4px;
+      border-radius: 50%;
+      background: currentColor;
+      box-shadow: 0 0 5px currentColor;
+    }
+
+    /* ─── Approval Prompt Banner (Human in the Loop) ─── */
+    .approval-banner {
+      display: none;
+      margin: 8px 14px 2px 14px;
+      background: linear-gradient(135deg, rgba(244, 63, 94, 0.15) 0%, rgba(245, 158, 11, 0.12) 100%);
+      border: 1px solid rgba(244, 63, 94, 0.4);
+      border-radius: 11px;
+      padding: 9px 11px;
+      animation: banner-in 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    @keyframes banner-in {
+      from { opacity: 0; transform: translateY(-4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .approval-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 5px;
+    }
+
+    .approval-tag {
+      font-size: 9.5px;
+      font-weight: 700;
+      text-transform: uppercase;
+      font-family: var(--font-mono);
+      letter-spacing: 0.08em;
+      color: #fda4af;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .approval-body {
+      font-size: 11.5px;
+      color: #ffe4e6;
+      line-height: 1.4;
+      margin-bottom: 7px;
+    }
+
+    .approval-details {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      background: rgba(0, 0, 0, 0.4);
+      border-radius: 6px;
+      padding: 4px 7px;
+      color: #fecdd3;
+      margin-bottom: 7px;
+      word-break: break-all;
+    }
+
+    .approval-actions {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }
+
+    .btn-approve {
+      background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+      border: none;
+      border-radius: 6px;
+      color: #fff;
+      font-size: 10.5px;
+      font-weight: 600;
+      font-family: var(--font-mono);
+      padding: 5px 11px;
+      cursor: pointer;
+      box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3);
+      transition: all 0.2s ease;
+    }
+
+    .btn-approve:hover {
+      background: #10b981;
+      transform: translateY(-1px);
+    }
+
+    .btn-deny {
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 6px;
+      color: var(--text-muted);
+      font-size: 10.5px;
+      font-weight: 500;
+      font-family: var(--font-mono);
+      padding: 5px 9px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .btn-deny:hover {
+      background: rgba(244, 63, 94, 0.2);
+      border-color: rgba(244, 63, 94, 0.4);
+      color: #fff;
+    }
+
+    /* ─── Live Telemetry & Result Feed ─── */
+    .activity-section {
+      padding: 7px 14px 10px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .result-box {
+      display: none;
+      background: linear-gradient(135deg, rgba(16, 185, 129, 0.12) 0%, rgba(6, 182, 212, 0.08) 100%);
+      border: 1px solid rgba(16, 185, 129, 0.35);
+      border-radius: 9px;
+      padding: 7px 11px;
+      color: #ecfdf5;
+      font-size: 11.5px;
+      line-height: 1.4;
+      animation: banner-in 0.3s ease;
+      user-select: text;
+      max-height: 105px;
+      overflow-y: auto;
+    }
+
+    .result-box.err {
+      background: linear-gradient(135deg, rgba(244, 63, 94, 0.12) 0%, rgba(239, 68, 68, 0.08) 100%);
+      border-color: rgba(244, 63, 94, 0.4);
+      color: #fff1f2;
+    }
+
+    .result-title-bar {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--nexus-emerald);
+      margin-bottom: 3px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .result-box.err .result-title-bar { color: var(--nexus-rose); }
+
+    .btn-reset-task {
+      font-size: 9px;
+      font-family: inherit;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: rgba(255, 255, 255, 0.08);
+      color: #fff;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .btn-reset-task:hover {
+      background: rgba(255, 255, 255, 0.18);
+    }
+
+    .log-stream {
+      background: rgba(7, 9, 16, 0.85);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: 9px;
+      padding: 5px 9px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      max-height: 115px;
+      overflow-y: auto;
+      font-family: var(--font-mono);
+      font-size: 10px;
+      transition: all 0.3s ease;
+    }
+
+    .log-entry {
+      display: flex;
+      align-items: flex-start;
+      gap: 6px;
+      color: var(--text-muted);
+      line-height: 1.35;
+      animation: banner-in 0.2s ease forwards;
+    }
+
+    .tag-badge {
+      font-weight: 700;
+      padding: 1px 4px;
+      border-radius: 3px;
+      font-size: 8.5px;
+      letter-spacing: 0.03em;
+      flex-shrink: 0;
+    }
+
+    .tag-init { color: #c084fc; background: rgba(192, 132, 252, 0.15); }
+    .tag-wake { color: #38bdf8; background: rgba(56, 189, 248, 0.15); }
+    .tag-voice { color: #22d3ee; background: rgba(34, 211, 238, 0.15); }
+    .tag-think { color: #c084fc; background: rgba(192, 132, 252, 0.15); }
+    .tag-browse { color: #22d3ee; background: rgba(34, 211, 238, 0.15); }
+    .tag-act { color: #fbbf24; background: rgba(251, 191, 36, 0.15); }
+    .tag-verify { color: #a78bfa; background: rgba(167, 139, 250, 0.15); }
+    .tag-done { color: #34d399; background: rgba(52, 211, 153, 0.15); }
+    .tag-err { color: #fb7185; background: rgba(251, 113, 133, 0.15); }
+    .tag-warn { color: #f59e0b; background: rgba(245, 158, 11, 0.15); }
+
+    .log-msg {
+      flex: 1;
+      word-break: break-word;
+      user-select: text;
+      color: #e2e8f0;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Floating Island Container -->
+  <div class="nexus-island-wrapper">
+
+    <!-- 1. Compact Floating Pill (Desktop Overlay Idle / Collapsed) -->
+    <div class="nexus-pill" id="nexus-pill" title="Click or say 'Nexus' to activate">
+      <div class="nexus-orb" id="pill-orb">
+        <svg viewBox="0 0 24 24">
+          <path d="M12 2L14.4 8.6L21 11L14.4 13.4L12 20L9.6 13.4L3 11L9.6 8.6L12 2Z" />
+        </svg>
+      </div>
+      <div class="pill-content">
+        <span class="pill-title">Nexus</span>
+        <span class="pill-divider"></span>
+        <span class="pill-status" id="pill-status">Say "Nexus"</span>
+        <div class="pill-shortcut">
+          <span>⌘K</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 2. Expanded Floating Assistant Console -->
+    <div class="nexus-assistant collapsed" id="nexus-assistant">
+      
+      <!-- Top Navigation & Live State Header -->
+      <div class="assistant-header">
+        <div class="header-left">
+          <div class="nexus-orb" id="assistant-orb">
+            <svg viewBox="0 0 24 24">
+              <path d="M12 2L14.4 8.6L21 11L14.4 13.4L12 20L9.6 13.4L3 11L9.6 8.6L12 2Z" />
+            </svg>
+          </div>
+          <div class="header-title-box">
+            <div class="header-title">
+              <span>Nexus</span>
+              <span class="state-badge state-idle" id="agent-state-badge">
+                <span class="state-dot"></span>
+                <span id="agent-state-text">Idle</span>
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div class="header-actions">
+          <!-- Wake Word On/Off Toggle -->
+          <div class="wake-badge active" id="wake-toggle" title="Toggle Wake Word ('Nexus')">
+            <div class="wake-dot"></div>
+            <span id="wake-label">Wake: ON</span>
+          </div>
+          <button class="btn-terminate" id="btn-terminate" title="Stop & Terminate Agent (Esc)">
+            <div class="stop-sq"></div>
+            <span>Stop</span>
+          </button>
+          <button class="icon-btn" id="btn-collapse" title="Minimize to Pill (Esc)">
+            <svg viewBox="0 0 24 24" fill="none" stroke-width="2.2" stroke-linecap="round">
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- Natural Language Goal Input Section -->
+      <div class="input-section">
+        <div class="input-container">
+          <input 
+            type="text" 
+            id="goal-input" 
+            class="goal-input" 
+            placeholder="Tell Nexus what to do on the web… (or speak)" 
+            autocomplete="off" 
+            spellcheck="false" 
+          />
+          <button class="mic-btn" id="mic-btn" title="Click to speak (or say 'Nexus')">
+            <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+              <line x1="12" y1="19" x2="12" y2="23"/>
+              <line x1="8" y1="23" x2="16" y2="23"/>
+            </svg>
+          </button>
+          <button class="submit-btn" id="submit-btn" title="Execute goal">
+            <span>Run</span>
+            <svg viewBox="0 0 24 24" fill="none" stroke-width="2.5" stroke-linecap="round">
+              <line x1="5" y1="12" x2="19" y2="12" />
+              <polyline points="12 5 19 12 12 19" />
+            </svg>
+          </button>
+        </div>
+
+        <!-- Suggestion Chips -->
+        <div class="suggestions-container" id="suggestions-container">
+          <div class="suggestion-chip" data-goal="Go to YouTube, search for 'Lofi hip hop radio live', and click the first live stream to start playing the video.">🎵 Play Lofi Live</div>
+          <div class="suggestion-chip" data-goal="Go to ChatGPT and ask it for a 3-bullet summary of Quantum Computing.">🤖 Ask ChatGPT</div>
+          <div class="suggestion-chip" data-goal="Go to Amazon and search for top rated wireless mechanical keyboard.">🛒 Search Amazon</div>
+          <div class="suggestion-chip" data-goal="Go to Hacker News, find the #1 trending post, and extract its title and link.">📰 Read Top News</div>
+        </div>
+      </div>
+
+      <!-- Live Stage Pipeline Ribbon -->
+      <div class="pipeline-ribbon">
+        <div class="stage-steps">
+          <div class="stage-node" id="stage-think">
+            <div class="stage-dot"></div>
+            <span>Thinking</span>
+          </div>
+          <div class="stage-node" id="stage-act">
+            <div class="stage-dot"></div>
+            <span>Acting</span>
+          </div>
+          <div class="stage-node" id="stage-verify">
+            <div class="stage-dot"></div>
+            <span>Verifying</span>
+          </div>
+          <div class="stage-node" id="stage-done">
+            <div class="stage-dot"></div>
+            <span>Completed</span>
+          </div>
+        </div>
+
+        <div class="conn-info" id="conn-info">
+          <div class="conn-pulse"></div>
+          <span id="conn-text">Online</span>
+        </div>
+      </div>
+
+      <!-- Human In The Loop Approval Banner -->
+      <div class="approval-banner" id="approval-banner">
+        <div class="approval-header">
+          <span class="approval-tag">
+            <span>⚠️</span> Security Approval Required
+          </span>
+        </div>
+        <div class="approval-body" id="approval-reason">
+          The agent is requesting permission to execute a sensitive action.
+        </div>
+        <div class="approval-details" id="approval-details"></div>
+        <div class="approval-actions">
+          <button class="btn-approve" id="btn-approve-action">Approve & Resume</button>
+          <button class="btn-deny" id="btn-deny-action">Deny / Cancel</button>
+        </div>
+      </div>
+
+      <!-- Live Telemetry Stream & Results -->
+      <div class="activity-section">
+        <div class="result-box" id="result-box">
+          <div class="result-title-bar">
+            <span id="result-headline">✓ Mission Accomplished</span>
+            <button class="btn-reset-task" onclick="resetAgentState()">New Goal</button>
+          </div>
+          <div id="result-text"></div>
+        </div>
+
+        <div class="log-stream" id="log-stream">
+          <div class="log-entry">
+            <span class="tag-badge tag-init">NEXUS</span>
+            <span class="log-msg">Assistant ready. Say "Nexus" or click the microphone to speak.</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <script>
+    'use strict';
+
+    /* ─── Unified NexusAudioService (Continuous VAD Wake-Word + Speech-to-Command) ─── */
+    class NexusAudioService {
+      constructor() {
+        this.isRecording = false;
+        this.isContinuousMonitoring = false;
+        this._stream = null;
+        this._audioCtx = null;
+        this._analyser = null;
+        this._mediaRecorder = null;
+        this._chunks = [];
+        this._monitorTimer = null;
+        this._silenceCountMs = 0;
+        this._hasSpoken = false;
+        this._listeners = new Map();
+
+        // Background Wake-Word VAD Buffer
+        this._isWakeBuffering = false;
+        this._wakeRecorder = null;
+        this._wakeChunks = [];
+        this._wakeSilenceMs = 0;
+        this._wakeSpeechMs = 0;
+        this._lastWakeCheckTime = 0;
+      }
+
+      on(event, callback) {
+        if (!this._listeners.has(event)) this._listeners.set(event, new Set());
+        this._listeners.get(event).add(callback);
+        return () => this.off(event, callback);
+      }
+
+      off(event, callback) {
+        if (this._listeners.has(event)) this._listeners.set(event, new Set());
+        this._listeners.get(event).delete(callback);
+      }
+
+      emit(event, data) {
+        const handlers = this._listeners.get(event);
+        if (handlers) handlers.forEach((fn) => { try { fn(data); } catch (e) { console.error(e); } });
+      }
+
+      async getStream() {
+        if (this._stream && this._stream.active) return this._stream;
+        this._stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          }
+        });
+        return this._stream;
+      }
+
+      async ensureAudioContext() {
+        if (!this._audioCtx) {
+          const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+          if (AudioContextClass) {
+            this._audioCtx = new AudioContextClass();
+          }
+        }
+        if (this._audioCtx && this._audioCtx.state === 'suspended') {
+          try { await this._audioCtx.resume(); } catch {}
+        }
+        return this._audioCtx;
+      }
+
+      async startContinuousMonitoring() {
+        if (this.isContinuousMonitoring) return;
+        try {
+          const stream = await this.getStream();
+          const audioCtx = await this.ensureAudioContext();
+          if (!audioCtx) return;
+
+          const source = audioCtx.createMediaStreamSource(stream);
+          this._analyser = audioCtx.createAnalyser();
+          this._analyser.fftSize = 256;
+          source.connect(this._analyser);
+
+          const bufferLength = this._analyser.frequencyBinCount;
+          const dataArray = new Uint8Array(bufferLength);
+          this.isContinuousMonitoring = true;
+
+          clearInterval(this._monitorTimer);
+          this._monitorTimer = setInterval(() => {
+            if (!this._analyser) return;
+
+            this._analyser.getByteFrequencyData(dataArray);
+            let sum = 0;
+            for (let i = 0; i < bufferLength; i++) sum += dataArray[i];
+            const avg = sum / bufferLength;
+            const volume = Math.min(100, Math.round((avg / 128) * 100));
+
+            this.emit('audio_level', volume);
+
+            // 1. Idle Wake-Word Spotting (VAD speech burst capture)
+            if (!this.isRecording && State.state === AGENT_STATES.IDLE && State.wakeWordEnabled && !State.busy) {
+              this._handleWakeVAD(volume, stream);
+            }
+
+            // 2. Command Recording Mode (Silence auto-detection)
+            if (this.isRecording) {
+              if (volume > 7) {
+                this._hasSpoken = true;
+                this._silenceCountMs = 0;
+              } else if (this._hasSpoken) {
+                this._silenceCountMs += 100;
+                if (this._silenceCountMs >= 1300) {
+                  console.log('[NexusAudio] Silence detected after speech. Auto-submitting command.');
+                  this.stopRecording();
+                }
+              }
+            }
+          }, 100);
+
+          this.emit('ready');
+        } catch (err) {
+          console.warn('[NexusAudio] Continuous monitor notice:', err.message);
+        }
+      }
+
+      _handleWakeVAD(volume, stream) {
+        const now = Date.now();
+        if (now - this._lastWakeCheckTime < 400) return;
+
+        if (volume >= 5) {
+          this._wakeSpeechMs += 100;
+          this._wakeSilenceMs = 0;
+
+          if (!this._isWakeBuffering && this._wakeSpeechMs >= 100) {
+            this._startWakeSnippetCapture(stream);
+          }
+        } else if (this._isWakeBuffering) {
+          this._wakeSilenceMs += 100;
+          if (this._wakeSilenceMs >= 500 || this._wakeSpeechMs >= 3000) {
+            this._finishWakeSnippetCapture();
+          }
+        } else {
+          this._wakeSpeechMs = 0;
+          this._wakeSilenceMs = 0;
+        }
+      }
+
+      _startWakeSnippetCapture(stream) {
+        if (this._isWakeBuffering) return;
+        this._isWakeBuffering = true;
+        this._wakeChunks = [];
+
+        try {
+          let mimeType = 'audio/webm;codecs=opus';
+          if (!MediaRecorder.isTypeSupported(mimeType)) {
+            mimeType = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/ogg';
+          }
+          this._wakeRecorder = new MediaRecorder(stream, { mimeType });
+        } catch {
+          this._wakeRecorder = new MediaRecorder(stream);
+        }
+
+        this._wakeRecorder.ondataavailable = (e) => {
+          if (e.data && e.data.size > 0) this._wakeChunks.push(e.data);
+        };
+
+        this._wakeRecorder.start();
+      }
+
+      _finishWakeSnippetCapture() {
+        if (!this._isWakeBuffering || !this._wakeRecorder) return;
+        this._isWakeBuffering = false;
+        this._wakeSpeechMs = 0;
+        this._wakeSilenceMs = 0;
+        this._lastWakeCheckTime = Date.now();
+
+        this._wakeRecorder.onstop = async () => {
+          const blob = new Blob(this._wakeChunks, { type: this._wakeRecorder?.mimeType || 'audio/webm' });
+          if (blob.size >= 250 && State.state === AGENT_STATES.IDLE && !State.busy) {
+            try {
+              const text = await this.transcribeAudio(blob);
+              if (text && text.trim().length > 0) {
+                console.log('[NexusAudio] Background VAD transcript:', text);
+                const wakeMatch = text.match(/\b(?:hey\s+|hi\s+|ok\s+|okay\s+)?nexus\b(.*)/i);
+                if (wakeMatch) {
+                  const command = (wakeMatch[1] || '').trim();
+                  this.emit('wakeword', { phrase: text, command });
+                }
+              }
+            } catch (err) {
+              console.warn('[NexusAudio] Wake transcribe notice:', err.message);
+            }
+          }
+        };
+
+        try {
+          if (this._wakeRecorder.state !== 'inactive') {
+            this._wakeRecorder.stop();
+          }
+        } catch {}
+      }
+
+      async startRecording() {
+        if (this.isRecording) return;
+        if (this._isWakeBuffering && this._wakeRecorder) {
+          try { this._wakeRecorder.stop(); } catch {}
+          this._isWakeBuffering = false;
+        }
+
+        this.isRecording = true;
+        this._chunks = [];
+        this._hasSpoken = false;
+        this._silenceCountMs = 0;
+
+        const stream = await this.getStream();
+        await this.ensureAudioContext();
+
+        let mimeType = 'audio/webm;codecs=opus';
+        if (!MediaRecorder.isTypeSupported(mimeType)) {
+          mimeType = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/ogg';
+        }
+
+        try {
+          this._mediaRecorder = new MediaRecorder(stream, { mimeType });
+        } catch {
+          this._mediaRecorder = new MediaRecorder(stream);
+        }
+
+        this._mediaRecorder.ondataavailable = (e) => {
+          if (e.data && e.data.size > 0) {
+            this._chunks.push(e.data);
+          }
+        };
+
+        this._mediaRecorder.start();
+        this.emit('start');
+
+        // Safety timeout (max 12 seconds)
+        setTimeout(() => {
+          if (this.isRecording) {
+            this.stopRecording();
+          }
+        }, 12000);
+      }
+
+      stopRecording() {
+        return new Promise((resolve) => {
+          if (!this.isRecording || !this._mediaRecorder) {
+            this.isRecording = false;
+            resolve(null);
+            return;
+          }
+
+          this.isRecording = false;
+
+          this._mediaRecorder.onstop = () => {
+            const mime = this._mediaRecorder?.mimeType || 'audio/webm';
+            const blob = new Blob(this._chunks, { type: mime });
+            console.log('[NexusAudio] Recorded audio blob size:', blob.size, 'bytes');
+            this.emit('stop', { blob, size: blob.size, hasSpoken: this._hasSpoken });
+            resolve({ blob, size: blob.size });
+          };
+
+          try {
+            if (this._mediaRecorder.state !== 'inactive') {
+              this._mediaRecorder.stop();
+            } else {
+              resolve(null);
+            }
+          } catch {
+            resolve(null);
+          }
+        });
+      }
+
+      async transcribeAudio(blob) {
+        if (!blob || blob.size < 250) return '';
+
+        const base64Data = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            const res = reader.result;
+            if (typeof res === 'string') {
+              resolve(res.split(',')[1] || '');
+            } else {
+              resolve('');
+            }
+          };
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
+
+        if (!base64Data) return '';
+
+        const res = await fetch(`${API_URL}/speech/transcribe`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            audioBase64: base64Data,
+            mimeType: blob.type || 'audio/webm',
+          }),
+        });
+
+        const data = await res.json();
+        if (data.success && data.text) {
+          let text = data.text.trim();
+          text = text.replace(/^(hey\s+|hi\s+|ok\s+|okay\s+)?nexus[,:\s]*/i, '').trim();
+          return text;
+        }
+        return '';
+      }
+    }
+
+    const ORIGIN = (location.protocol === 'file:') ? 'http://localhost:3000' : window.location.origin;
+    const API_URL = ORIGIN + '/api';
+
+    /* ─── 8 Live Agent States ─── */
+    const AGENT_STATES = {
+      IDLE: 'idle',
+      LISTENING: 'listening',
+      TRANSCRIBING: 'transcribing',
+      THINKING: 'thinking',
+      ACTING: 'acting',
+      VERIFYING: 'verifying',
+      WAITING: 'waiting',
+      COMPLETED: 'completed',
+      ERROR: 'error'
+    };
+
+    const State = {
+      task: null,
+      state: AGENT_STATES.IDLE,
+      busy: false,
+      isExpanded: false,
+      wakeWordEnabled: true,
+      hasMicPermission: false,
+      pendingApproval: null,
+      logs: []
+    };
+
+    /* ─── DOM References ─── */
+    const pill = document.getElementById('nexus-pill');
+    const pillStatus = document.getElementById('pill-status');
+    const pillOrb = document.getElementById('pill-orb');
+    const assistant = document.getElementById('nexus-assistant');
+    const assistantOrb = document.getElementById('assistant-orb');
+    const stateBadge = document.getElementById('agent-state-badge');
+    const stateText = document.getElementById('agent-state-text');
+    const goalInput = document.getElementById('goal-input');
+    const micBtn = document.getElementById('mic-btn');
+    const submitBtn = document.getElementById('submit-btn');
+    const terminateBtn = document.getElementById('btn-terminate');
+    const collapseBtn = document.getElementById('btn-collapse');
+    const wakeToggle = document.getElementById('wake-toggle');
+    const wakeLabel = document.getElementById('wake-label');
+    const suggestions = document.getElementById('suggestions-container');
+    const logStream = document.getElementById('log-stream');
+    const resultBox = document.getElementById('result-box');
+    const resultHeadline = document.getElementById('result-headline');
+    const resultText = document.getElementById('result-text');
+    const approvalBanner = document.getElementById('approval-banner');
+    const approvalReason = document.getElementById('approval-reason');
+    const approvalDetails = document.getElementById('approval-details');
+    const btnApprove = document.getElementById('btn-approve-action');
+    const btnDeny = document.getElementById('btn-deny-action');
+    const connText = document.getElementById('conn-text');
+    const connInfo = document.getElementById('conn-info');
+
+    const stages = {
+      think: document.getElementById('stage-think'),
+      act: document.getElementById('stage-act'),
+      verify: document.getElementById('stage-verify'),
+      done: document.getElementById('stage-done')
+    };
+
+    /* ─── Desktop Window Bounds IPC Sync ─── */
+    function syncDesktopSize() {
+      if (window.nexusDesktop) {
+        if (State.isExpanded) {
+          window.nexusDesktop.expand(510);
+        } else {
+          window.nexusDesktop.collapse();
+        }
+      }
+    }
+
+    /* ─── UI Expansion / Collapse ─── */
+    function expandAssistant() {
+      State.isExpanded = true;
+      pill.classList.add('hidden');
+      assistant.classList.remove('collapsed');
+      syncDesktopSize();
+      if (!State.busy) {
+        setTimeout(() => goalInput.focus(), 150);
+        if (State.state === AGENT_STATES.IDLE) {
+          setAgentState(AGENT_STATES.IDLE, 'Say "Nexus" • ⌘K');
+        }
+      }
+    }
+
+    function collapseAssistant() {
+      State.isExpanded = false;
+      assistant.classList.add('collapsed');
+      pill.classList.remove('hidden');
+      syncDesktopSize();
+      if ([AGENT_STATES.LISTENING, AGENT_STATES.TRANSCRIBING].includes(State.state) && !State.busy) {
+        nexusAudio?.stopRecording();
+        setAgentState(AGENT_STATES.IDLE, 'Say "Nexus"');
+      }
+    }
+
+    pill.addEventListener('click', async () => {
+      expandAssistant();
+      if (!State.hasMicPermission && nexusAudio) {
+        try {
+          await nexusAudio.getStream();
+          await nexusAudio.ensureAudioContext();
+          State.hasMicPermission = true;
+        } catch {}
+      }
+    });
+    collapseBtn.addEventListener('click', collapseAssistant);
+
+    // Global Keybindings: Ctrl+K or Cmd+K to toggle, Esc to collapse / stop
+    window.addEventListener('keydown', (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        if (State.isExpanded) collapseAssistant();
+        else expandAssistant();
+      } else if (e.key === 'Escape') {
+        if (State.busy) {
+          terminateAgent();
+        } else if (State.isExpanded) {
+          collapseAssistant();
+        }
+      }
+    });
+
+    goalInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        submitGoal();
+      }
+    });
+
+    submitBtn.addEventListener('click', () => submitGoal());
+    terminateBtn.addEventListener('click', () => terminateAgent());
+
+    // Suggestion chips
+    suggestions.addEventListener('click', (e) => {
+      const chip = e.target.closest('.suggestion-chip');
+      if (chip && chip.dataset.goal) {
+        submitGoal(chip.dataset.goal);
+      }
+    });
+
+    /* ─── State Engine ─── */
+    function setAgentState(agentState, customStatus = '') {
+      State.state = agentState;
+      const statusMap = {
+        [AGENT_STATES.IDLE]: { label: 'Idle', pill: 'Say "Nexus"', class: 'state-idle' },
+        [AGENT_STATES.LISTENING]: { label: 'Listening', pill: 'Listening…', class: 'state-listening' },
+        [AGENT_STATES.TRANSCRIBING]: { label: 'Transcribing', pill: 'Transcribing…', class: 'state-transcribing' },
+        [AGENT_STATES.THINKING]: { label: 'Thinking', pill: 'Thinking…', class: 'state-thinking' },
+        [AGENT_STATES.ACTING]: { label: 'Acting', pill: 'Executing…', class: 'state-acting' },
+        [AGENT_STATES.VERIFYING]: { label: 'Verifying', pill: 'Verifying…', class: 'state-verifying' },
+        [AGENT_STATES.WAITING]: { label: 'Waiting for Approval', pill: 'Approval needed!', class: 'state-waiting' },
+        [AGENT_STATES.COMPLETED]: { label: 'Completed', pill: 'Done', class: 'state-completed' },
+        [AGENT_STATES.ERROR]: { label: 'Error', pill: 'Error', class: 'state-error' }
+      };
+
+      const meta = statusMap[agentState] || statusMap[AGENT_STATES.IDLE];
+      stateBadge.className = `state-badge ${meta.class}`;
+      stateText.textContent = meta.label;
+      pillStatus.textContent = customStatus || meta.pill;
+
+      // Update Orb and Mic animations
+      if (agentState === AGENT_STATES.LISTENING) {
+        pillOrb.classList.add('listening');
+        assistantOrb.classList.add('listening');
+        micBtn.classList.add('listening');
+        goalInput.placeholder = 'Listening to your voice command… (Speak now)';
+      } else {
+        pillOrb.classList.remove('listening');
+        assistantOrb.classList.remove('listening');
+        micBtn.classList.remove('listening');
+      }
+
+      if (agentState === AGENT_STATES.TRANSCRIBING) {
+        goalInput.placeholder = 'Transcribing speech to command…';
+      }
+
+      // Update Pipeline Stages
+      Object.values(stages).forEach(s => s.className = 'stage-node');
+      if (agentState === AGENT_STATES.THINKING) {
+        stages.think.className = 'stage-node active';
+      } else if (agentState === AGENT_STATES.ACTING) {
+        stages.think.className = 'stage-node done';
+        stages.act.className = 'stage-node active';
+      } else if (agentState === AGENT_STATES.VERIFYING) {
+        stages.think.className = 'stage-node done';
+        stages.act.className = 'stage-node done';
+        stages.verify.className = 'stage-node active';
+      } else if (agentState === AGENT_STATES.WAITING) {
+        stages.think.className = 'stage-node done';
+        stages.act.className = 'stage-node active';
+      } else if (agentState === AGENT_STATES.COMPLETED) {
+        Object.values(stages).forEach(s => s.className = 'stage-node done');
+      }
+
+      // Update UI Busy state
+      const isWorking = [
+        AGENT_STATES.THINKING,
+        AGENT_STATES.ACTING,
+        AGENT_STATES.VERIFYING,
+        AGENT_STATES.WAITING
+      ].includes(agentState);
+
+      State.busy = isWorking;
+      submitBtn.disabled = isWorking;
+      terminateBtn.style.display = isWorking ? 'flex' : 'none';
+      if (isWorking) {
+        suggestions.style.display = 'none';
+        goalInput.placeholder = 'Nexus is executing… Click Stop or press Esc';
+      } else if (agentState !== AGENT_STATES.LISTENING && agentState !== AGENT_STATES.TRANSCRIBING) {
+        suggestions.style.display = 'flex';
+        goalInput.placeholder = 'Tell Nexus what to do on the web… (or speak)';
+      }
+    }
+
+    /* ─── Realtime Activity Logs ─── */
+    let lastLogHash = '';
+    function addLog(tag, message, tagClass = 'tag-think') {
+      const hash = `${tag}:${message}`;
+      if (lastLogHash === hash) return;
+      lastLogHash = hash;
+
+      const entry = document.createElement('div');
+      entry.className = 'log-entry';
+      entry.innerHTML = `
+        <span class="tag-badge ${tagClass}">${tag}</span>
+        <span class="log-msg">${escapeHtml(message)}</span>
+      `;
+      logStream.appendChild(entry);
+      logStream.scrollTop = logStream.scrollHeight;
+    }
+
+    function showResult(content, isError = false) {
+      resultBox.style.display = 'block';
+      resultBox.className = isError ? 'result-box err' : 'result-box';
+      resultHeadline.textContent = isError ? '✗ Task Terminated / Failed' : '✓ Mission Accomplished';
+      resultText.textContent = content;
+      logStream.scrollTop = logStream.scrollHeight;
+    }
+
+    function resetAgentState() {
+      resultBox.style.display = 'none';
+      approvalBanner.style.display = 'none';
+      setAgentState(AGENT_STATES.IDLE, 'Say "Nexus"');
+      goalInput.value = '';
+      if (State.isExpanded) goalInput.focus();
+    }
+
+    /* ─── Audio & Voice Pipeline Setup ─── */
+    let nexusAudio = null;
+
+    async function initAudioServices() {
+      try {
+        nexusAudio = new NexusAudioService();
+
+        // Realtime audio level reaction: pulse orb with user's voice
+        nexusAudio.on('audio_level', (level) => {
+          if (level > 8 && State.state === AGENT_STATES.LISTENING) {
+            assistantOrb.style.boxShadow = `0 0 ${Math.min(26, 12 + level / 2)}px rgba(56, 189, 248, 0.9)`;
+          } else if (level > 10 && State.state === AGENT_STATES.IDLE) {
+            pillOrb.style.boxShadow = `0 0 ${Math.min(22, 10 + level / 3)}px rgba(168, 85, 247, 0.8)`;
+          }
+        });
+
+        // Background Wake-Word Detection Event ("Nexus")
+        nexusAudio.on('wakeword', ({ phrase, command }) => {
+          if (State.busy) return;
+          console.log('[Nexus] Wake-word activated! Phrase:', phrase, 'Command:', command);
+          expandAssistant();
+          if (window.nexusDesktop?.notifyWakeWordTriggered) {
+            window.nexusDesktop.notifyWakeWordTriggered();
+          }
+
+          if (command && command.length > 2) {
+            goalInput.value = command;
+            addLog('WAKE', `Heard: "Nexus, ${command}"`, 'tag-wake');
+            submitGoal(command);
+          } else {
+            addLog('WAKE', 'Wake word "Nexus" detected. Listening…', 'tag-wake');
+            startVoiceCapture();
+          }
+        });
+
+        // Command Recording Completion (Silence or Manual Stop)
+        nexusAudio.on('stop', async ({ blob, size }) => {
+          if (State.state !== AGENT_STATES.LISTENING) return;
+
+          if (size > 500) {
+            setAgentState(AGENT_STATES.TRANSCRIBING, 'Transcribing…');
+            addLog('VOICE', 'Transcribing spoken command with Gemini…', 'tag-voice');
+            try {
+              const text = await nexusAudio.transcribeAudio(blob);
+              if (text && text.trim().length > 0) {
+                goalInput.value = text;
+                addLog('VOICE', `Transcribed: "${text}"`, 'tag-done');
+                setTimeout(() => submitGoal(text), 250);
+              } else {
+                addLog('VOICE', 'No clear speech recognized. Please speak closer to your microphone.', 'tag-warn');
+                setAgentState(AGENT_STATES.IDLE, 'Say "Nexus"');
+              }
+            } catch (err) {
+              console.error('[Audio] Transcription error:', err);
+              addLog('ERROR', `Transcription error: ${err.message}`, 'tag-err');
+              setAgentState(AGENT_STATES.IDLE, 'Say "Nexus"');
+            }
+          } else {
+            setAgentState(AGENT_STATES.IDLE, 'Say "Nexus"');
+          }
+        });
+
+        // Request stream & start continuous background monitoring
+        await nexusAudio.startContinuousMonitoring();
+        State.hasMicPermission = true;
+        addLog('MIC', 'Voice active. Say "Nexus" or click the microphone to speak.', 'tag-wake');
+
+        // Wake Toggle Button
+        wakeToggle.addEventListener('click', () => {
+          State.wakeWordEnabled = !State.wakeWordEnabled;
+          if (State.wakeWordEnabled) {
+            wakeToggle.className = 'wake-badge active';
+            wakeLabel.textContent = 'Wake: ON';
+            addLog('AUDIO', 'Voice detection active ("Nexus")', 'tag-voice');
+          } else {
+            wakeToggle.className = 'wake-badge';
+            wakeLabel.textContent = 'Wake: OFF';
+            addLog('AUDIO', 'Voice detection paused', 'tag-warn');
+          }
+        });
+
+      } catch (err) {
+        console.warn('[Nexus] Audio services setup notice:', err.message);
+      }
+    }
+
+    // Manual Mic Click Activation / Toggle
+    micBtn.addEventListener('click', async () => {
+      if (State.busy) return;
+      if (State.state === AGENT_STATES.LISTENING && nexusAudio?.isRecording) {
+        addLog('VOICE', 'Processing voice recording…', 'tag-voice');
+        await finishAndTranscribeVoice();
+      } else {
+        expandAssistant();
+        startVoiceCapture();
+      }
+    });
+
+    async function startVoiceCapture() {
+      if (!nexusAudio || State.busy) return;
+
+      try {
+        setAgentState(AGENT_STATES.LISTENING, 'Listening for speech…');
+        addLog('VOICE', 'Listening… Speak your command now', 'tag-voice');
+        await nexusAudio.startRecording();
+      } catch (err) {
+        console.warn('[Nexus] Failed to start audio recording:', err.message);
+        addLog('MIC', `Microphone access error: ${err.message}`, 'tag-warn');
+        setAgentState(AGENT_STATES.IDLE, 'Say "Nexus"');
+      }
+    }
+
+    async function finishAndTranscribeVoice() {
+      if (!nexusAudio || !nexusAudio.isRecording) return;
+      await nexusAudio.stopRecording();
+    }
+
+    /* ─── Human In The Loop Approvals ─── */
+    function promptApproval(approvalData) {
+      State.pendingApproval = approvalData;
+      setAgentState(AGENT_STATES.WAITING, 'Approval needed!');
+      approvalBanner.style.display = 'block';
+      approvalReason.textContent = approvalData.reason || 'This action requires your confirmation to proceed.';
+      const toolName = approvalData.tool || 'Action';
+      const args = JSON.stringify(approvalData.arguments || {});
+      approvalDetails.textContent = `${toolName} ${args}`;
+      addLog('APPROVAL', `Approval requested: ${toolName}`, 'tag-warn');
+      if (!State.isExpanded) {
+        pillStatus.textContent = `⚠️ Approve ${toolName}`;
+      }
+    }
+
+    btnApprove.addEventListener('click', async () => {
+      if (!State.task?.id) return;
+      approvalBanner.style.display = 'none';
+      addLog('AUTH', 'User approved action. Resuming execution…', 'tag-done');
+      setAgentState(AGENT_STATES.ACTING, 'Resuming…');
+      try {
+        const res = await fetch(`${API_URL}/agent/tasks/${State.task.id}/approve`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' }
+        });
+        const data = await res.json();
+        if (!data.success) {
+          addLog('ERROR', data.error || 'Approval resume failed', 'tag-err');
+        }
+      } catch (err) {
+        addLog('ERROR', `Approval request failed: ${err.message}`, 'tag-err');
+      }
+    });
+
+    btnDeny.addEventListener('click', () => {
+      approvalBanner.style.display = 'none';
+      terminateAgent();
+    });
+
+    /* ─── Task Termination ─── */
+    async function terminateAgent() {
+      const taskId = State.task?.id;
+      addLog('HALT', 'Cancelling agent task…', 'tag-err');
+      if (pollTimer) {
+        clearInterval(pollTimer);
+        pollTimer = null;
+      }
+      approvalBanner.style.display = 'none';
+      setAgentState(AGENT_STATES.ERROR, 'Cancelled');
+      showResult('Execution stopped by user.', true);
+
+      if (taskId) {
+        try {
+          await fetch(`${API_URL}/agent/tasks/${taskId}/cancel`, { method: 'POST' });
+        } catch (err) {
+          console.error('Failed to cancel task:', err);
+        }
+      }
+    }
+
+    /* ─── Submit Natural Language Goal to Existing Backend API ─── */
+    async function submitGoal(customText) {
+      const goal = (customText || goalInput.value).trim();
+      if (!goal || State.busy) return;
+
+      goalInput.value = goal;
+      const prevTaskId = State.task?.id;
+      resetAgentState();
+      setAgentState(AGENT_STATES.THINKING, 'Planning goal…');
+      addLog('INIT', `Dispatched goal: "${goal}"`, 'tag-init');
+
+      if (prevTaskId) {
+        fetch(`${API_URL}/agent/tasks/${prevTaskId}/cancel`, { method: 'POST' }).catch(() => {});
+      }
+
+      const sessionId = 'nexus-' + Date.now();
+
+      try {
+        const res = await fetch(`${API_URL}/agent/run`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ goal, sessionId, async: true })
+        });
+        const data = await res.json();
+        if (data.success && data.task) {
+          State.task = data.task;
+          socket.emit('subscribe:task', data.task.id);
+          startTaskPolling(data.task.id);
+        } else {
+          setAgentState(AGENT_STATES.ERROR, 'Start failed');
+          showResult(data.error || 'Failed to dispatch task', true);
+        }
+      } catch (err) {
+        setAgentState(AGENT_STATES.ERROR, 'Network error');
+        showResult(`Connection error: ${err.message}`, true);
+        addLog('ERROR', `Network request failed: ${err.message}`, 'tag-err');
+      }
+    }
+
+    /* ─── REST Polling Fallback ─── */
+    let pollTimer = null;
+    function startTaskPolling(id) {
+      if (pollTimer) clearInterval(pollTimer);
+      pollTimer = setInterval(async () => {
+        try {
+          const res = await fetch(`${API_URL}/agent/tasks/${id}`);
+          const data = await res.json();
+          if (data.success && data.task) {
+            State.task = data.task;
+            if (data.task.status === 'completed') {
+              clearInterval(pollTimer);
+              pollTimer = null;
+              setAgentState(AGENT_STATES.COMPLETED, 'Complete');
+              showResult(data.task.result || 'Task completed successfully.');
+            } else if (['failed', 'blocked', 'cancelled'].includes(data.task.status)) {
+              clearInterval(pollTimer);
+              pollTimer = null;
+              setAgentState(AGENT_STATES.ERROR, data.task.status);
+              showResult(data.task.error || `Task ended with status: ${data.task.status}`, true);
+            } else if (data.task.status === 'waiting_for_user' && data.task.pendingApproval) {
+              promptApproval(data.task.pendingApproval);
+            }
+          }
+        } catch {}
+      }, 2000);
+    }
+
+    /* ─── Socket.IO Real-time Gateway ─── */
+    const socket = io(ORIGIN, {
+      transports: ['websocket', 'polling'],
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 1000
+    });
+
+    socket.on('connect', () => {
+      connText.textContent = 'Online';
+      connInfo.style.color = 'var(--nexus-emerald)';
+    });
+
+    socket.on('disconnect', () => {
+      connText.textContent = 'Connecting…';
+      connInfo.style.color = 'var(--nexus-amber)';
+    });
+
+    const telemetryEvents = [
+      'task:started', 'task:planned', 'task:updated', 'task:cancelled',
+      'step:started', 'observation:ready', 'decision:made',
+      'task:approval_required', 'action:requires_approval',
+      'verification:result', 'recovery:triggered', 'step:completed',
+      'model:error', 'task:blocked'
+    ];
+
+    telemetryEvents.forEach(evt => {
+      socket.on(evt, data => handleTelemetry(evt, data));
+    });
+
+    function handleTelemetry(evt, data) {
+      if (!data) return;
+      const tid = data.taskId || data.id || data.task?.id;
+      if (State.task && tid && tid !== State.task.id) return;
+
+      if (data.task) {
+        State.task = data.task;
+        if (data.task.status === 'completed') {
+          if (pollTimer) clearInterval(pollTimer);
+          setAgentState(AGENT_STATES.COMPLETED, 'Complete');
+          showResult(data.task.result || 'Task completed successfully.');
+          return;
+        } else if (['failed', 'cancelled', 'blocked'].includes(data.task.status)) {
+          if (pollTimer) clearInterval(pollTimer);
+          setAgentState(AGENT_STATES.ERROR, data.task.status);
+          showResult(data.task.error || `Task ${data.task.status}.`, true);
+          return;
+        }
+      }
+
+      switch (evt) {
+        case 'task:started':
+          setAgentState(AGENT_STATES.THINKING, 'Thinking…');
+          addLog('PLAN', 'Agent analyzing goal & preparing browser…', 'tag-think');
+          break;
+
+        case 'task:planned':
+          if (Array.isArray(data.steps) && data.steps.length) {
+            addLog('PLAN', `Goal decomposed into ${data.steps.length} sequential milestones`, 'tag-think');
+          }
+          break;
+
+        case 'observation:ready':
+          setAgentState(AGENT_STATES.ACTING, 'Observing page…');
+          const page = data.observation?.pageState;
+          if (page?.title || page?.url) {
+            addLog('OBSERVE', `Inspecting: ${page.title || page.url}`, 'tag-browse');
+          }
+          break;
+
+        case 'decision:made':
+          const decision = data.decision || {};
+          if (decision.tool) {
+            setAgentState(AGENT_STATES.ACTING, `Acting: ${decision.tool}`);
+            addLog('DECIDE', `${decision.tool} — ${decision.reasoning || ''}`, 'tag-act');
+          } else if (decision.taskComplete) {
+            setAgentState(AGENT_STATES.COMPLETED, 'Goal Achieved');
+            showResult(decision.result || decision.reasoning || 'Goal completed!');
+          }
+          break;
+
+        case 'task:approval_required':
+        case 'action:requires_approval':
+          promptApproval(data);
+          break;
+
+        case 'verification:result':
+          setAgentState(AGENT_STATES.VERIFYING, 'Verifying step…');
+          const v = data.verification;
+          if (v) {
+            addLog('VERIFY', v.verified ? `Verified: ${v.reason || 'Pass'}` : `Notice: ${v.reason}`, v.verified ? 'tag-verify' : 'tag-warn');
+          }
+          break;
+
+        case 'recovery:triggered':
+          const diag = data.diagnosis;
+          addLog('RECOVER', `Triggered strategy: ${diag?.strategy || 'Retry'} (${diag?.reason || ''})`, 'tag-warn');
+          break;
+
+        case 'step:completed':
+          const rec = data.record;
+          addLog('STEP', `${rec?.tool || 'Step'}: ${rec?.outcome || 'Success'}`, 'tag-done');
+          break;
+
+        case 'model:error':
+          addLog('LLM', `${data.errorType || 'Error'}: ${data.message || ''}`, 'tag-err');
+          break;
+
+        case 'task:cancelled':
+          if (pollTimer) clearInterval(pollTimer);
+          setAgentState(AGENT_STATES.ERROR, 'Cancelled');
+          showResult('Task cancelled.', true);
+          break;
+
+        case 'task:blocked':
+          if (pollTimer) clearInterval(pollTimer);
+          setAgentState(AGENT_STATES.ERROR, 'Blocked');
+          showResult(`Task blocked by security policy: ${data.reason}`, true);
+          break;
+      }
+    }
+
+    function escapeHtml(s) {
+      return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    // Initialize audio services on load
+    window.addEventListener('DOMContentLoaded', () => {
+      initAudioServices();
+    });
+  </script>
+</body>
+</html>

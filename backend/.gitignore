@@ -1,0 +1,22 @@
+# General
+node_modules/
+.env
+.env.local
+*.log
+npm-debug.log*
+
+# Screenshots and debug artifacts
+screenshots/*.png
+screenshots/*.jpg
+screenshots/*.webp
+
+# Keep the screenshots directory itself
+!screenshots/.gitkeep
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+*.swp

@@ -1,0 +1,68 @@
+// Prisma schema for Agent Server
+// Supports PostgreSQL when DATABASE_URL is provided; gracefully degraded if offline.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Session {
+  id        String   @id @default(uuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  tasks     Task[]
+
+  @@map("sessions")
+}
+
+model Task {
+  id                 String    @id @default(uuid())
+  sessionId          String
+  session            Session   @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  goal               String
+  status             String    @default("pending") // pending, running, completed, failed, blocked, waiting_for_user, cancelled
+  stepCount          Int       @default(0)
+  recoveryCount      Int       @default(0)
+  modelCallCount     Int       @default(0)
+  visionCallCount    Int       @default(0)
+  result             String?
+  error              String?
+  pendingApproval    Json?
+  plannedSteps       Json?
+  createdAt          DateTime  @default(now())
+  startedAt          DateTime?
+  completedAt        DateTime?
+  updatedAt          DateTime  @updatedAt
+  steps              Step[]
+
+  @@map("tasks")
+}
+
+model Step {
+  id          String   @id @default(uuid())
+  taskId      String
+  task        Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  stepNumber  Int
+  tool        String
+  arguments   Json
+  outcome     String?
+  success     Boolean  @default(false)
+  verified    Boolean  @default(false)
+  timestamp   DateTime @default(now())
+
+  @@map("steps")
+}
+
+model MemoryItem {
+  id        String   @id @default(uuid())
+  key       String   @unique
+  value     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("memories")
+}

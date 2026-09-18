@@ -1,0 +1,22 @@
+{
+  "name": "nexus-desktop-assistant",
+  "version": "1.0.0",
+  "description": "Nexus Autonomous AI Browser Agent - True Desktop Floating Overlay",
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "node backend/src/server.js",
+    "desktop": "electron electron/main.js",
+    "dev": "concurrently \"node backend/src/server.js\" \"electron electron/main.js\""
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "desktop-overlay",
+    "electron"
+  ],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "electron": "^33.2.1"
+  }
+}

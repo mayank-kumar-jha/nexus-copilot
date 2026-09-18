@@ -1,0 +1,20 @@
+# Dependencies
+node_modules/
+backend/node_modules/
+
+# Environment Variables & Secrets
+.env
+backend/.env
+*.env.local
+
+# Browser Profiles & Cache
+user-data/
+backend/user-data/
+screenshots/
+backend/screenshots/
+
+# Logs & Temp
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
