@@ -52,9 +52,12 @@ function startBackendServer() {
   
   backendProcess = spawn('node', [serverScript], {
     cwd: path.join(rootDir, 'backend'),
-    stdio: 'inherit',
-    windowsHide: false,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true,
   });
+
+  backendProcess.stdout?.on('data', (d) => console.log(`[Backend] ${d.toString().trim()}`));
+  backendProcess.stderr?.on('data', (d) => console.error(`[Backend ERR] ${d.toString().trim()}`));
 
   backendProcess.on('error', (err) => {
     console.error('[Electron] Backend server spawn error:', err);

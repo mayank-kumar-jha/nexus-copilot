@@ -1237,14 +1237,14 @@
 
         this._wakeRecorder.onstop = async () => {
           const blob = new Blob(this._wakeChunks, { type: this._wakeRecorder?.mimeType || 'audio/webm' });
-          if (blob.size >= 250 && State.state === AGENT_STATES.IDLE && !State.busy) {
+          if (blob.size >= 250 && State.state === AGENT_STATES.IDLE && !State.busy && State.wakeWordEnabled) {
             try {
               const text = await this.transcribeAudio(blob);
               if (text && text.trim().length > 0) {
                 console.log('[NexusAudio] Background VAD transcript:', text);
                 const wakeMatch = text.match(/\b(?:hey\s+|hi\s+|ok\s+|okay\s+)?nexus\b(.*)/i);
                 if (wakeMatch) {
-                  const command = (wakeMatch[1] || '').trim();
+                  const command = (wakeMatch[1] || '').replace(/^[,:.\s]+/, '').trim();
                   this.emit('wakeword', { phrase: text, command });
                 }
               }
@@ -1364,9 +1364,7 @@
 
         const data = await res.json();
         if (data.success && data.text) {
-          let text = data.text.trim();
-          text = text.replace(/^(hey\s+|hi\s+|ok\s+|okay\s+)?nexus[,:\s]*/i, '').trim();
-          return text;
+          return data.text.trim();
         }
         return '';
       }
@@ -1665,15 +1663,18 @@
             setAgentState(AGENT_STATES.TRANSCRIBING, 'Transcribing…');
             addLog('VOICE', 'Transcribing spoken command with Gemini…', 'tag-voice');
             try {
-              const text = await nexusAudio.transcribeAudio(blob);
+              let text = await nexusAudio.transcribeAudio(blob);
               if (text && text.trim().length > 0) {
-                goalInput.value = text;
-                addLog('VOICE', `Transcribed: "${text}"`, 'tag-done');
-                setTimeout(() => submitGoal(text), 250);
-              } else {
-                addLog('VOICE', 'No clear speech recognized. Please speak closer to your microphone.', 'tag-warn');
-                setAgentState(AGENT_STATES.IDLE, 'Say "Nexus"');
+                text = text.replace(/^(hey\s+|hi\s+|ok\s+|okay\s+)?nexus[,:\s]*/i, '').trim();
+                if (text.length > 0) {
+                  goalInput.value = text;
+                  addLog('VOICE', `Command: "${text}"`, 'tag-done');
+                  submitGoal(text);
+                  return;
+                }
               }
+              addLog('VOICE', 'No clear speech recognized. Please speak closer to your microphone.', 'tag-warn');
+              setAgentState(AGENT_STATES.IDLE, 'Say "Nexus"');
             } catch (err) {
               console.error('[Audio] Transcription error:', err);
               addLog('ERROR', `Transcription error: ${err.message}`, 'tag-err');
@@ -1781,10 +1782,15 @@
     /* ─── Task Termination ─── */
     async function terminateAgent() {
       const taskId = State.task?.id;
+      State.cancelledTaskId = taskId;
+      State.busy = false;
       addLog('HALT', 'Cancelling agent task…', 'tag-err');
       if (pollTimer) {
         clearInterval(pollTimer);
         pollTimer = null;
+      }
+      if (nexusAudio && nexusAudio.isRecording) {
+        try { await nexusAudio.stopRecording(); } catch {}
       }
       approvalBanner.style.display = 'none';
       setAgentState(AGENT_STATES.ERROR, 'Cancelled');
@@ -1898,6 +1904,9 @@
     function handleTelemetry(evt, data) {
       if (!data) return;
       const tid = data.taskId || data.id || data.task?.id;
+      if (State.cancelledTaskId && tid === State.cancelledTaskId && evt !== 'task:cancelled') {
+        return;
+      }
       if (State.task && tid && tid !== State.task.id) return;
 
       if (data.task) {

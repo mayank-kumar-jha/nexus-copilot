@@ -117,6 +117,9 @@ class AgentOrchestrator {
    */
   async step(task, memory, bypassApproval = false) {
     const stepNumber = task.stepCount + 1;
+    if (task.isTerminal || task.status === 'cancelled') {
+      return { error: 'Task cancelled by user', terminal: true };
+    }
     this._emitRealtime('step:started', { taskId: task.id, stepNumber });
 
     // ── 1. OBSERVE ────────────────────────────────────────────────────────────
@@ -129,16 +132,25 @@ class AgentOrchestrator {
         );
       }
       observation = await this._observer.observe(this._runtime, { goal: task.goal });
+      if (task.isTerminal || task.status === 'cancelled') {
+        return { error: 'Task cancelled by user', terminal: true };
+      }
       if (observation.usedVision) {
         task.visionCallCount++;
       }
       this._emitRealtime('observation:ready', { taskId: task.id, observation });
     } catch (err) {
+      if (task.isTerminal || task.status === 'cancelled') {
+        return { error: 'Task cancelled by user', terminal: true };
+      }
       console.error('[Orchestrator] Observation error:', err);
       return { error: `Observation failed: ${err.message}`, terminal: true };
     }
 
     // ── 2. DECIDE ─────────────────────────────────────────────────────────────
+    if (task.isTerminal || task.status === 'cancelled') {
+      return { error: 'Task cancelled by user', terminal: true };
+    }
     let decision;
     const history = memory.getContextForModel();
     const availableTools = this._registry.list();
@@ -160,6 +172,9 @@ class AgentOrchestrator {
           availableTools
         );
       } catch (err) {
+        if (task.isTerminal || task.status === 'cancelled') {
+          return { error: 'Task cancelled by user', terminal: true };
+        }
         const apiErr = err instanceof AgentApiError ? err : null;
         const errType = apiErr ? apiErr.type : 'UNKNOWN';
 
@@ -182,10 +197,17 @@ class AgentOrchestrator {
       decision = this._fallbackDecision(task.goal, observation.pageState, history);
     }
 
+    if (task.isTerminal || task.status === 'cancelled') {
+      return { error: 'Task cancelled by user', terminal: true };
+    }
+
     this._emitRealtime('decision:made', { taskId: task.id, decision });
 
     // Check if model declared the task complete
     if (decision.taskComplete) {
+      if (task.isTerminal || task.status === 'cancelled') {
+        return { error: 'Task cancelled by user', terminal: true };
+      }
       task.recordStep({
         tool: 'none',
         arguments: {},
@@ -225,6 +247,10 @@ class AgentOrchestrator {
     }
 
     // ── 4. ACT ────────────────────────────────────────────────────────────────
+    if (task.isTerminal || task.status === 'cancelled') {
+      return { error: 'Task cancelled by user', terminal: true };
+    }
+
     const executionContext = {
       runtime: this._runtime,
       task,
@@ -235,6 +261,10 @@ class AgentOrchestrator {
       executionContext,
       bypassApproval
     );
+
+    if (task.isTerminal || task.status === 'cancelled') {
+      return { error: 'Task cancelled by user', terminal: true };
+    }
 
     // Invalidate observation cache on page-altering actions
     if (['browser.navigate', 'browser.click', 'browser.submit_form', 'browser.back'].includes(decision.tool)) {
@@ -249,6 +279,10 @@ class AgentOrchestrator {
       afterObservation = observation;
     }
 
+    if (task.isTerminal || task.status === 'cancelled') {
+      return { error: 'Task cancelled by user', terminal: true };
+    }
+
     const verification = await this._verifier.verify({
       decision: { tool: decision.tool, args: decision.arguments, expectedOutcome: decision.expectedOutcome },
       executionResult,
@@ -256,6 +290,10 @@ class AgentOrchestrator {
       afterObservation,
       runtime: this._runtime,
     });
+
+    if (task.isTerminal || task.status === 'cancelled') {
+      return { error: 'Task cancelled by user', terminal: true };
+    }
 
     this._emitRealtime('verification:result', { taskId: task.id, verification });
 

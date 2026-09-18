@@ -46,6 +46,8 @@ class BrowserRuntime {
 
     const launchArgs = [
       '--start-maximized',
+      '--window-position=50,50',
+      '--window-size=1280,800',
       '--no-sandbox',
       '--disable-setuid-sandbox',
       '--disable-blink-features=AutomationControlled',
@@ -56,11 +58,21 @@ class BrowserRuntime {
       '--new-window',
     ];
 
-    const isHeadless = config.browser.headless === true || config.browser.headless === 'true';
-
     try {
       const browser = await chromium.launch({
-        headless: isHeadless,
+        headless: false,
+        args: launchArgs,
+        slowMo: config.browser.slowMo || 200,
+      });
+      this._browser = browser;
+      this._context = await browser.newContext({
+        viewport: null,
+      });
+      console.log('[BrowserRuntime] Launched visible browser window.');
+    } catch (err) {
+      console.warn('[BrowserRuntime] Primary launch notice, trying Chrome channel:', err.message);
+      const browser = await chromium.launch({
+        headless: false,
         channel: 'chrome',
         args: launchArgs,
         slowMo: config.browser.slowMo || 200,
@@ -68,23 +80,8 @@ class BrowserRuntime {
       this._browser = browser;
       this._context = await browser.newContext({
         viewport: null,
-        userAgent:
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
-          '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
       });
-      console.log('[BrowserRuntime] Launched visible Google Chrome browser window.');
-    } catch (err) {
-      console.warn('[BrowserRuntime] Google Chrome channel notice, launching bundled Chromium:', err.message);
-      const browser = await chromium.launch({
-        headless: isHeadless,
-        args: launchArgs,
-        slowMo: config.browser.slowMo || 200,
-      });
-      this._browser = browser;
-      this._context = await browser.newContext({
-        viewport: null,
-      });
-      console.log('[BrowserRuntime] Launched visible Chromium browser window.');
+      console.log('[BrowserRuntime] Launched visible Chrome channel browser window.');
     }
 
     this._context.on('close', () => {
@@ -188,6 +185,17 @@ class BrowserRuntime {
       this._launched = false;
       console.log('[BrowserRuntime] Closed.');
     }
+  }
+
+  /**
+   * Stop/abort any current page activity immediately.
+   */
+  async stop() {
+    try {
+      if (this._page && !this._page.isClosed()) {
+        await this._page.evaluate(() => window.stop()).catch(() => {});
+      }
+    } catch {}
   }
 
   // ─── Navigation ───────────────────────────────────────────────────────────

@@ -171,9 +171,14 @@ class AgentController {
 
     task.cancel();
     const sessionInfo = this._sessions.tasks.get(id);
-    if (sessionInfo?.session?.orchestrator) {
-      sessionInfo.session.orchestrator._emitRealtime('task:cancelled', { taskId: task.id, status: 'cancelled' });
-      sessionInfo.session.orchestrator._emitRealtime('task:updated', task.getSummary());
+    if (sessionInfo?.session) {
+      if (sessionInfo.session.runtime) {
+        sessionInfo.session.runtime.stop().catch(() => {});
+      }
+      if (sessionInfo.session.orchestrator) {
+        sessionInfo.session.orchestrator._emitRealtime('task:cancelled', { taskId: task.id, status: 'cancelled' });
+        sessionInfo.session.orchestrator._emitRealtime('task:updated', task.getSummary());
+      }
     }
     res.json({
       success: true,
