@@ -1,7 +1,12 @@
+param(
+    [int[]]$TargetPids = @()
+)
+
 Add-Type @"
 using System;
 using System.Text;
 using System.Runtime.InteropServices;
+using System.Collections.Generic;
 
 public class WinForceTop {
     public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
@@ -14,9 +19,6 @@ public class WinForceTop {
     [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
     [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
     [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
-    [DllImport("kernel32.dll")] public static extern IntPtr OpenProcess(uint dwDesiredAccess, bool bInheritHandle, uint dwProcessId);
-    [DllImport("kernel32.dll")] public static extern bool QueryFullProcessImageName(IntPtr hProcess, int dwFlags, StringBuilder lpExeName, ref int lpdwSize);
-    [DllImport("kernel32.dll")] public static extern bool CloseHandle(IntPtr hObject);
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
     [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr hWnd);
@@ -31,62 +33,47 @@ public class WinForceTop {
     private const int SW_RESTORE = 9;
     private const int SW_SHOW = 5;
 
-    public static void FocusAllChrome() {
+    public static void FocusTargetPids(int[] targetPids) {
+        if (targetPids == null || targetPids.Length == 0) return;
+        HashSet<uint> pidSet = new HashSet<uint>();
+        foreach (int p in targetPids) pidSet.Add((uint)p);
+
         IntPtr hFore = GetForegroundWindow();
         uint dummy;
         uint foreThread = GetWindowThreadProcessId(hFore, out dummy);
         uint currentThread = GetCurrentThreadId();
 
         EnumWindows((hWnd, lParam) => {
+            uint pid = 0;
+            GetWindowThreadProcessId(hWnd, out pid);
+            if (!pidSet.Contains(pid)) return true;
+
             StringBuilder cls = new StringBuilder(256);
             GetClassName(hWnd, cls, 256);
             string className = cls.ToString();
 
             if (className == "Chrome_WidgetWin_1") {
-                uint pid = 0;
-                GetWindowThreadProcessId(hWnd, out pid);
-                if (pid == 0) return true;
+                StringBuilder title = new StringBuilder(256);
+                GetWindowText(hWnd, title, 256);
+                string titleStr = title.ToString();
 
-                // Validate process executable name to avoid focusing other Electron apps
-                bool isRealBrowser = false;
-                IntPtr hProc = OpenProcess(0x1000 /* PROCESS_QUERY_LIMITED_INFORMATION */, false, pid);
-                if (hProc != IntPtr.Zero) {
-                    StringBuilder procPath = new StringBuilder(1024);
-                    int size = procPath.Capacity;
-                    if (QueryFullProcessImageName(hProc, 0, procPath, ref size)) {
-                        string exe = procPath.ToString().ToLower();
-                        if ((exe.EndsWith("\\chrome.exe") || exe.EndsWith("\\msedge.exe")) &&
-                            !exe.Contains("wispr") && !exe.Contains("voice") && !exe.Contains("electron") && !exe.Contains("antigravity")) {
-                            isRealBrowser = true;
-                        }
-                    }
-                    CloseHandle(hProc);
-                }
-
-                if (isRealBrowser) {
-                    StringBuilder title = new StringBuilder(256);
-                    GetWindowText(hWnd, title, 256);
-                    string titleStr = title.ToString();
-
-                    // Only focus visible browser windows
-                    if (titleStr.Length > 0 || IsWindowVisible(hWnd)) {
-                        if (foreThread != currentThread && foreThread != 0) {
-                            AttachThreadInput(currentThread, foreThread, true);
-                            ShowWindow(hWnd, SW_RESTORE);
-                            SetWindowPos(hWnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
-                            SetWindowPos(hWnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
-                            BringWindowToTop(hWnd);
-                            SetForegroundWindow(hWnd);
-                            SwitchToThisWindow(hWnd, true);
-                            AttachThreadInput(currentThread, foreThread, false);
-                        } else {
-                            ShowWindow(hWnd, SW_RESTORE);
-                            SetWindowPos(hWnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
-                            SetWindowPos(hWnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
-                            BringWindowToTop(hWnd);
-                            SetForegroundWindow(hWnd);
-                            SwitchToThisWindow(hWnd, true);
-                        }
+                if (titleStr.Length > 0 || IsWindowVisible(hWnd)) {
+                    if (foreThread != currentThread && foreThread != 0) {
+                        AttachThreadInput(currentThread, foreThread, true);
+                        ShowWindow(hWnd, SW_RESTORE);
+                        SetWindowPos(hWnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+                        SetWindowPos(hWnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+                        BringWindowToTop(hWnd);
+                        SetForegroundWindow(hWnd);
+                        SwitchToThisWindow(hWnd, true);
+                        AttachThreadInput(currentThread, foreThread, false);
+                    } else {
+                        ShowWindow(hWnd, SW_RESTORE);
+                        SetWindowPos(hWnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+                        SetWindowPos(hWnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+                        BringWindowToTop(hWnd);
+                        SetForegroundWindow(hWnd);
+                        SwitchToThisWindow(hWnd, true);
                     }
                 }
             }
@@ -96,4 +83,15 @@ public class WinForceTop {
 }
 "@
 
-[WinForceTop]::FocusAllChrome()
+if ($TargetPids.Count -eq 0) {
+    # Find only the Nexus browser processes
+    $procs = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
+        $_.CommandLine -and $_.CommandLine.Contains('nexus-agent-browser')
+    }
+    $TargetPids = @($procs | Select-Object -ExpandProperty ProcessId)
+}
+
+if ($TargetPids.Count -gt 0) {
+    [WinForceTop]::FocusTargetPids($TargetPids)
+}
+

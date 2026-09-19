@@ -233,7 +233,6 @@ class BrowserRuntime {
       if (active && !active.isClosed()) {
         try {
           await active.bringToFront().catch(() => {});
-          this._forceWindowVisible().catch(() => {});
           return active;
         } catch {}
       }
@@ -301,7 +300,6 @@ class BrowserRuntime {
     console.log('[BrowserRuntime] Navigating to %s', url);
 
     await this._page.goto(url, { waitUntil: 'domcontentloaded' });
-    this._forceWindowVisible().catch(() => {});
     this.saveStorageState().catch(() => {});
 
     const result = {
