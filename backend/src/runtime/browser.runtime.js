@@ -64,6 +64,8 @@ class BrowserRuntime {
     // ── Common launch args ────────────────────────────────────────────────────
     const extraArgs = [
       '--start-maximized',
+      '--window-size=1280,800',
+      '--window-position=80,80',
       '--disable-background-mode',
       '--disable-backgrounding-occluded-windows',
       '--disable-features=CalculateNativeWinOcclusion',
@@ -192,47 +194,18 @@ class BrowserRuntime {
 
   /**
    * Force the Playwright browser window to be visible on screen.
-   * Uses Windows WScript.Shell AppActivate targeting ONLY this instance's data dir.
+   * Uses Win32 API to show, restore, un-minimize, and foreground the Chrome_WidgetWin_1 window.
    */
   async _forceWindowVisible(dataDir) {
-    if (!dataDir) return;
-    const { execFileSync } = require('child_process');
-    const os = require('os');
-    const safeDir = dataDir.replace(/\\/g, '\\\\').toLowerCase();
-    const ps1 = path.join(os.tmpdir(), `nexus-show-win-${Date.now()}.ps1`);
-
-    const script = [
-      `$safeDir = '${safeDir}'.ToLower()`,
-      `$wshell = New-Object -ComObject WScript.Shell`,
-      `for ($i = 0; $i -lt 5; $i++) {`,
-      `  $procs = Get-WmiObject Win32_Process -Filter "Name='chrome.exe' OR Name='chromium.exe'"`,
-      `  foreach ($p in $procs) {`,
-      `    $cmd = $p.CommandLine`,
-      `    if (-not $cmd) { continue }`,
-      `    if (-not $cmd.ToLower().Contains($safeDir)) { continue }`,
-      `    if ($cmd -match '--type=') { continue }`,
-      `    $proc = Get-Process -Id $p.ProcessId -ErrorAction SilentlyContinue`,
-      `    if ($proc -and $proc.MainWindowHandle -ne 0) {`,
-      `      $wshell.AppActivate($p.ProcessId) | Out-Null`,
-      `      Write-Host "Focused PID=$($p.ProcessId) HWND=$($proc.MainWindowHandle)"`,
-      `      exit 0`,
-      `    }`,
-      `  }`,
-      `  Start-Sleep -Milliseconds 250`,
-      `}`,
-    ].join('\r\n');
+    const { execFile } = require('child_process');
+    const scriptPath = path.resolve(__dirname, '../../../scripts/focus-browser.ps1');
+    if (!fs.existsSync(scriptPath)) return;
 
     try {
-      fs.writeFileSync(ps1, script, 'utf8');
-      const result = execFileSync('powershell.exe', [
-        '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', ps1,
-      ], { timeout: 5000, encoding: 'utf8' }).trim();
-      if (result) console.log('[BrowserRuntime] Window focus:', result);
-    } catch (err) {
-      // Non-fatal
-    } finally {
-      try { fs.unlinkSync(ps1); } catch {}
-    }
+      execFile('powershell.exe', [
+        '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', scriptPath,
+      ], { timeout: 4000 }, () => {});
+    } catch {}
   }
 
 
@@ -316,6 +289,7 @@ class BrowserRuntime {
     console.log('[BrowserRuntime] Navigating to %s', url);
 
     await this._page.goto(url, { waitUntil: 'domcontentloaded' });
+    this._forceWindowVisible(this._usedDataDir).catch(() => {});
 
     const result = {
       url: this._page.url(),

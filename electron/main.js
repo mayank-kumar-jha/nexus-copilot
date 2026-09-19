@@ -53,7 +53,7 @@ function startBackendServer() {
   backendProcess = spawn('node', [serverScript], {
     cwd: path.join(rootDir, 'backend'),
     stdio: ['ignore', 'pipe', 'pipe'],
-    windowsHide: true,
+    windowsHide: false,
   });
 
   backendProcess.stdout?.on('data', (d) => console.log(`[Backend] ${d.toString().trim()}`));
