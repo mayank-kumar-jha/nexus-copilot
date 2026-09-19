@@ -50,23 +50,19 @@ class BrowserRuntime {
     }
 
     // ── Step 1: Kill background Chrome ghost processes ───────────────────────
-    // Windows keeps Chrome running as a "background app" even after the window
-    // is closed. When Playwright tries to launch Chrome, the OS hands the request
-    // to one of these ghost processes, which opens the page in a *hidden* window.
-    // We kill all windowless Chrome processes that are NOT our own session first.
+    // Windows keeps Chrome running as "background app" even after closing the window.
+    // Playwright's launch request gets intercepted by these ghost processes, which
+    // open the page in a hidden window that Playwright owns but you can't see.
     await this._killBackgroundChrome(userDataDir);
 
-    // ── Step 2: Clean stale profile locks ───────────────────────────────────
-    try {
-      const lockFile = path.join(userDataDir, 'SingletonLock');
-      if (fs.existsSync(lockFile)) fs.unlinkSync(lockFile);
-      const cookieFile = path.join(userDataDir, 'SingletonCookie');
-      if (fs.existsSync(cookieFile)) fs.unlinkSync(cookieFile);
-    } catch {}
+    // ── Step 2: Clean stale profile locks from previous crashes ─────────────
+    for (const fname of ['SingletonLock', 'SingletonCookie', 'lockfile']) {
+      try { fs.unlinkSync(path.join(userDataDir, fname)); } catch {}
+    }
 
     // ── Step 3: Build launch args ────────────────────────────────────────────
-    // NOTE: Do NOT use ignoreDefaultArgs:true — Playwright needs its own flags
-    // like --remote-debugging-pipe for CDP to work (agent control of the browser).
+    // IMPORTANT: Do NOT use ignoreDefaultArgs:true — Playwright needs its own
+    // flags like --remote-debugging-pipe for CDP to work (browser control).
     const extraArgs = [
       '--start-maximized',
       '--disable-background-mode',
@@ -80,62 +76,65 @@ class BrowserRuntime {
       '--disable-notifications',
     ];
 
-    const launchOptions = {
+    const baseOpts = {
       headless: false,
       viewport: null,
       args: extraArgs,
       slowMo: config.browser.slowMo || 0,
     };
 
-    // Find real Google Chrome executable path
-    const chromePaths = [
+    // Find real Google Chrome executable (Windows paths)
+    const chromeExe = [
       'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
       'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
       process.env.LOCALAPPDATA
         ? path.join(process.env.LOCALAPPDATA, 'Google', 'Chrome', 'Application', 'chrome.exe')
         : null,
-    ].filter(Boolean);
-    const chromeExe = chromePaths.find(p => fs.existsSync(p)) || null;
+    ].filter(Boolean).find(p => fs.existsSync(p)) || null;
 
-    // ── Step 4: Launch with 3 fallback strategies ────────────────────────────
-    // Strategy 1: Real Google Chrome via executablePath (keeps saved logins)
-    if (chromeExe) {
+    // ── Step 4: Launch with fallback chain ───────────────────────────────────
+    const tried = [];
+
+    // Strategy 1: Real Google Chrome via executablePath (preserves saved logins)
+    if (chromeExe && !this._context) {
       try {
         this._context = await chromium.launchPersistentContext(userDataDir, {
-          ...launchOptions,
+          ...baseOpts,
           executablePath: chromeExe,
         });
-        console.log(`[BrowserRuntime] Launched Google Chrome: ${chromeExe}`);
-      } catch (err1) {
-        console.warn('[BrowserRuntime] Chrome executablePath failed:', err1.message);
+        console.log(`[BrowserRuntime] ✓ Launched Google Chrome: ${chromeExe}`);
+      } catch (e) {
+        tried.push(`Chrome executablePath: ${e.message.split('\n')[0]}`);
+        console.warn('[BrowserRuntime] Chrome (executablePath) failed:', e.message.split('\n')[0]);
       }
     }
 
-    // Strategy 2: Playwright channel:'chrome' (auto-finds Chrome installation)
+    // Strategy 2: Playwright channel:'chrome' auto-resolver
     if (!this._context) {
       try {
         this._context = await chromium.launchPersistentContext(userDataDir, {
-          ...launchOptions,
+          ...baseOpts,
           channel: 'chrome',
         });
-        console.log('[BrowserRuntime] Launched Chrome via Playwright channel.');
-      } catch (err2) {
-        console.warn('[BrowserRuntime] Playwright channel Chrome failed:', err2.message);
+        console.log('[BrowserRuntime] ✓ Launched Chrome via Playwright channel.');
+      } catch (e) {
+        tried.push(`Chrome channel: ${e.message.split('\n')[0]}`);
+        console.warn('[BrowserRuntime] Chrome (channel) failed:', e.message.split('\n')[0]);
       }
     }
 
-    // Strategy 3: Bundled Playwright Chromium (last resort — always works)
+    // Strategy 3: Bundled Playwright Chromium — always available, always works
     if (!this._context) {
       try {
         this._context = await chromium.launchPersistentContext(userDataDir, {
-          headless: false,
-          viewport: null,
-          args: extraArgs,
-          slowMo: config.browser.slowMo || 0,
+          ...baseOpts,
         });
-        console.log('[BrowserRuntime] Launched bundled Chromium (fallback).');
-      } catch (err3) {
-        throw new Error(`[BrowserRuntime] All launch strategies failed: ${err3.message}`);
+        console.log('[BrowserRuntime] ✓ Launched bundled Playwright Chromium.');
+      } catch (e) {
+        tried.push(`Bundled Chromium: ${e.message.split('\n')[0]}`);
+        throw new Error(
+          `[BrowserRuntime] All launch strategies failed.\n${tried.map((t, i) => `  ${i + 1}. ${t}`).join('\n')}`
+        );
       }
     }
 
@@ -145,9 +144,9 @@ class BrowserRuntime {
       this._page = null;
     });
 
-    // Auto-track new tabs and popups (essential for Instahyre, Indeed, LinkedIn, job portals)
+    // Auto-track new tabs and popups
     this._context.on('page', async (newPage) => {
-      console.log('[BrowserRuntime] New tab/window opened! Automatically switching active focus to new window.');
+      console.log('[BrowserRuntime] New tab/window opened. Switching focus.');
       this._page = newPage;
       this._page.setDefaultNavigationTimeout(config.browser.navigationTimeout || 30000);
       this._page.setDefaultTimeout(config.browser.navigationTimeout || 30000);
@@ -162,9 +161,12 @@ class BrowserRuntime {
     this._page.setDefaultNavigationTimeout(config.browser.navigationTimeout || 30000);
     this._page.setDefaultTimeout(config.browser.navigationTimeout || 30000);
 
-    try {
-      await this._page.bringToFront();
-    } catch {}
+    try { await this._page.bringToFront(); } catch {}
+
+    // ── Step 5: Force the browser window to be visually on screen ────────────
+    // Even after bringToFront(), the window can still be behind other apps.
+    // Use Windows API via a temp PowerShell file to guarantee visibility.
+    await this._forceWindowVisible();
 
     this._launched = true;
   }
@@ -194,42 +196,97 @@ class BrowserRuntime {
 
   /**
    * Kill all Chrome processes that have no visible window (ghost background processes).
-   * These ghosts intercept Playwright's launch request and make Chrome open invisibly.
-   * We only kill processes that don't belong to our own Playwright session (user-data-dir).
+   * Uses a temp .ps1 file so PowerShell gets proper multi-line syntax.
    */
   async _killBackgroundChrome(ourUserDataDir) {
-    const { execSync } = require('child_process');
+    const { execFileSync } = require('child_process');
+    const os = require('os');
+    const safeDir = ourUserDataDir.replace(/\\/g, '\\\\');
+    const ps1 = path.join(os.tmpdir(), `nexus-ghost-kill-${Date.now()}.ps1`);
+
+    // Write script to temp file — inline PS1 breaks when \n becomes a space
+    const script = [
+      `$ourDir = [IO.Path]::GetFullPath('${safeDir}').ToLower()`,
+      `$procs = Get-WmiObject Win32_Process -Filter "Name='chrome.exe'"`,
+      `foreach ($p in $procs) {`,
+      `  $cmd = $p.CommandLine`,
+      `  if (-not $cmd) { continue }`,
+      `  $hasOurDir = $cmd.ToLower().Contains($ourDir)`,
+      `  $isSub = $cmd -match '--type=(renderer|gpu-process|utility|crashpad|ppapi|broker)'`,
+      `  if ($hasOurDir -or $isSub) { continue }`,
+      `  $proc = Get-Process -Id $p.ProcessId -ErrorAction SilentlyContinue`,
+      `  if ($proc -and $proc.MainWindowHandle -eq 0) {`,
+      `    Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue`,
+      `    Write-Host "Killed ghost Chrome PID=$($p.ProcessId)"`,
+      `  }`,
+      `}`,
+    ].join('\r\n');
+
     try {
-      // PowerShell: find chrome.exe processes with no window (MainWindowHandle=0)
-      // that are NOT our own Playwright-controlled Chrome (identified by user-data-dir)
-      const psScript = `
-        $ourDir = [System.IO.Path]::GetFullPath('${ourUserDataDir.replace(/\\/g, '\\\\')}').ToLower()
-        Get-WmiObject Win32_Process -Filter "Name='chrome.exe'" | ForEach-Object {
-          $cmdLine = $_.CommandLine
-          $pid = $_.ProcessId
-          $hasOurDir = $cmdLine -and $cmdLine.ToLower().Contains($ourDir)
-          $isSubProcess = $cmdLine -and ($cmdLine -match '--type=(renderer|gpu-process|utility|crashpad|ppapi)')
-          if (-not $hasOurDir -and -not $isSubProcess) {
-            $proc = Get-Process -Id $pid -ErrorAction SilentlyContinue
-            if ($proc -and $proc.MainWindowHandle -eq 0) {
-              Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
-              Write-Host "Killed background Chrome ghost PID=$pid"
-            }
-          }
-        }
-      `;
-      const result = execSync(`powershell -NoProfile -NonInteractive -Command "${psScript.replace(/\n/g, ' ')}"`, {
-        timeout: 8000,
-        encoding: 'utf8',
-      }).trim();
-      if (result) console.log('[BrowserRuntime] Ghost cleanup:', result.replace(/\n/g, ', '));
+      fs.writeFileSync(ps1, script, 'utf8');
+      const result = execFileSync('powershell.exe', [
+        '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', ps1,
+      ], { timeout: 10000, encoding: 'utf8' }).trim();
+      if (result) console.log('[BrowserRuntime] Ghost cleanup:', result.replace(/\r?\n/g, ', '));
     } catch (err) {
-      // Non-critical — log and continue
-      console.warn('[BrowserRuntime] Ghost Chrome cleanup skipped:', err.message.split('\n')[0]);
+      console.warn('[BrowserRuntime] Ghost cleanup skipped:', err.message.split('\n')[0]);
+    } finally {
+      try { fs.unlinkSync(ps1); } catch {}
     }
-    // Brief pause to let Windows process the kills
-    await new Promise(r => setTimeout(r, 800));
+
+    await new Promise(r => setTimeout(r, 1000));
   }
+
+  /**
+   * Force the Playwright browser window to be visible on screen.
+   * Uses Windows API (ShowWindow + SetForegroundWindow) via a temp .ps1 file.
+   */
+  async _forceWindowVisible() {
+    const { execFileSync } = require('child_process');
+    const os = require('os');
+    const userDataDir = path.resolve(__dirname, '../../user-data');
+    const safeDir = userDataDir.replace(/\\/g, '\\\\');
+    const ps1 = path.join(os.tmpdir(), `nexus-show-win-${Date.now()}.ps1`);
+
+    const script = [
+      `Add-Type -TypeDefinition @"`,
+      `using System;`,
+      `using System.Runtime.InteropServices;`,
+      `public class NexusWin32 {`,
+      `  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);`,
+      `  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);`,
+      `  [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr hWnd);`,
+      `}`,
+      `"@`,
+      `$ourDir = '${safeDir}'.ToLower()`,
+      `$procs = Get-WmiObject Win32_Process -Filter "Name='chrome.exe' OR Name='chromium.exe'"`,
+      `foreach ($p in $procs) {`,
+      `  $cmd = $p.CommandLine`,
+      `  if (-not $cmd) { continue }`,
+      `  if (-not $cmd.ToLower().Contains($ourDir)) { continue }`,
+      `  if ($cmd -match '--type=') { continue }`,
+      `  $proc = Get-Process -Id $p.ProcessId -ErrorAction SilentlyContinue`,
+      `  if (-not $proc) { continue }`,
+      `  [NexusWin32]::ShowWindow($proc.MainWindowHandle, 9) | Out-Null`,
+      `  [NexusWin32]::BringWindowToTop($proc.MainWindowHandle) | Out-Null`,
+      `  [NexusWin32]::SetForegroundWindow($proc.MainWindowHandle) | Out-Null`,
+      `  Write-Host "Focused PID=$($p.ProcessId) HWND=$($proc.MainWindowHandle)"`,
+      `}`,
+    ].join('\r\n');
+
+    try {
+      fs.writeFileSync(ps1, script, 'utf8');
+      const result = execFileSync('powershell.exe', [
+        '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', ps1,
+      ], { timeout: 8000, encoding: 'utf8' }).trim();
+      if (result) console.log('[BrowserRuntime] Window focus:', result);
+    } catch (err) {
+      console.warn('[BrowserRuntime] Window focus skipped:', err.message.split('\n')[0]);
+    } finally {
+      try { fs.unlinkSync(ps1); } catch {}
+    }
+  }
+
 
   /**
    * Ensure the browser and active page are running and ready.
