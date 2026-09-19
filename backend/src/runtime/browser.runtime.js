@@ -81,19 +81,16 @@ class BrowserRuntime {
       '--start-maximized',
       '--window-size=1280,800',
       '--window-position=60,60',
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
       '--no-first-run',
       '--no-default-browser-check',
       '--disable-popup-blocking',
       '--disable-notifications',
-      '--disable-gpu-shader-disk-cache',
-      '--disable-gpu-program-cache',
       '--disable-backgrounding-occluded-windows',
       '--disable-breakpad',
       '--disable-component-update',
       '--disable-session-crashed-bubble',
       '--disable-infobars',
+      '--disable-blink-features=AutomationControlled',
     ];
 
     const baseOpts = {
