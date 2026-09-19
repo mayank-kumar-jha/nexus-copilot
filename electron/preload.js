@@ -9,4 +9,7 @@ contextBridge.exposeInMainWorld('nexusDesktop', {
   resize: (width, height) => ipcRenderer.send('nexus:resize', { width, height }),
   close: () => ipcRenderer.send('nexus:close'),
   notifyWakeWordTriggered: () => ipcRenderer.send('nexus:wakeword-triggered'),
+  onGlobalVoiceTrigger: (callback) => {
+    ipcRenderer.on('nexus:global-voice-trigger', (_e, data) => callback(data));
+  },
 });

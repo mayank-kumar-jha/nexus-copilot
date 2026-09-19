@@ -2,7 +2,7 @@
 
 const path = require('path');
 const os = require('os');
-const { app, BrowserWindow, ipcMain, screen, session, systemPreferences } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, session, systemPreferences, globalShortcut } = require('electron');
 
 // Set isolated user data directory to prevent Windows cache lock conflicts
 app.setName('nexus-desktop-assistant');
@@ -187,16 +187,32 @@ app.whenReady().then(async () => {
 
   createWindow();
 
+  try {
+    const triggerPushToTalk = () => {
+      if (mainWindow) {
+        mainWindow.show();
+        mainWindow.focus();
+        mainWindow.webContents.send('nexus:global-voice-trigger');
+      }
+    };
+    globalShortcut.register('Shift+num1', triggerPushToTalk);
+    globalShortcut.register('Shift+1', triggerPushToTalk);
+  } catch (err) {
+    console.warn('[Electron] Global shortcut registration notice:', err.message);
+  }
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 });
 
 app.on('before-quit', () => {
+  try { globalShortcut.unregisterAll(); } catch {}
   stopBackendServer();
 });
 
 app.on('window-all-closed', () => {
+  try { globalShortcut.unregisterAll(); } catch {}
   stopBackendServer();
   if (process.platform !== 'darwin') {
     app.quit();
