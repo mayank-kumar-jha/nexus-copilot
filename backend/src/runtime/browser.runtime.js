@@ -57,56 +57,88 @@ class BrowserRuntime {
       if (fs.existsSync(cookieFile)) fs.unlinkSync(cookieFile);
     } catch {}
 
+    // Find Google Chrome executable on Windows
+    const chromePaths = [
+      'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+      'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+      process.env.LOCALAPPDATA
+        ? path.join(process.env.LOCALAPPDATA, 'Google', 'Chrome', 'Application', 'chrome.exe')
+        : null,
+    ].filter(Boolean);
+
+    let chromeExe = null;
+    for (const p of chromePaths) {
+      if (fs.existsSync(p)) { chromeExe = p; break; }
+    }
+
+    // Key fix: ignoreDefaultArgs strips Playwright's invisible-mode flags:
+    // --remote-debugging-pipe about:blank, --metrics-recording-only,
+    // --disable-features=DestroyProfileOnBrowserClose, etc.
+    // Without these, Chrome opens as a real visible window every time.
     const launchArgs = [
       '--start-maximized',
       '--disable-background-mode',
       '--disable-backgrounding-occluded-windows',
-      '--disable-features=CalculateNativeWinOcclusion',
       '--no-sandbox',
       '--disable-setuid-sandbox',
-      '--disable-blink-features=AutomationControlled',
       '--no-first-run',
       '--no-default-browser-check',
       '--disable-popup-blocking',
       '--disable-notifications',
+      '--restore-last-session',
+      `--user-data-dir=${userDataDir}`,
+      'about:blank',
     ];
 
-    const launchOptions = {
+    const baseOptions = {
       headless: false,
       viewport: null,
+      slowMo: config.browser.slowMo || 0,
+      // Strip ALL of Playwright's automation flags — use our own args list above
+      ignoreDefaultArgs: true,
       args: launchArgs,
-      slowMo: config.browser.slowMo || 200,
-      userAgent:
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
-        '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
     };
 
-    // Strategy 1: Launch Persistent Google Chrome (loads saved accounts, ChatGPT, Google, logins)
-    try {
-      this._context = await chromium.launchPersistentContext(userDataDir, {
-        ...launchOptions,
-        channel: 'chrome',
-      });
-      console.log('[BrowserRuntime] Launched persistent Google Chrome window (profile: user-data).');
-    } catch (err1) {
-      console.warn('[BrowserRuntime] Persistent Chrome profile notice:', err1.message);
-
-      // Strategy 2: Persistent Bundled Chromium (if Google Chrome channel missing or locked)
+    // Strategy 1: Use real Google Chrome exe directly (bypasses ALL Playwright automation suppression)
+    if (chromeExe) {
       try {
-        this._context = await chromium.launchPersistentContext(userDataDir, launchOptions);
-        console.log('[BrowserRuntime] Launched persistent Chromium window.');
-      } catch (err2) {
-        console.warn('[BrowserRuntime] Profile lock fallback, launching fresh session:', err2.message);
+        this._context = await chromium.launchPersistentContext(userDataDir, {
+          ...baseOptions,
+          executablePath: chromeExe,
+        });
+        console.log(`[BrowserRuntime] Launched real Google Chrome window via executablePath: ${chromeExe}`);
+      } catch (err1) {
+        console.warn('[BrowserRuntime] executablePath Chrome failed:', err1.message);
+        chromeExe = null; // fall through to next strategy
+      }
+    }
 
-        // Strategy 3: Fresh standalone browser instance with isolated temp profile
+    // Strategy 2: Playwright channel:'chrome' with ignoreDefaultArgs (fallback)
+    if (!this._context) {
+      try {
+        this._context = await chromium.launchPersistentContext(userDataDir, {
+          ...baseOptions,
+          channel: 'chrome',
+        });
+        console.log('[BrowserRuntime] Launched Chrome via channel with ignoreDefaultArgs.');
+      } catch (err2) {
+        console.warn('[BrowserRuntime] channel Chrome failed:', err2.message);
+      }
+    }
+
+    // Strategy 3: Bundled Chromium (last resort)
+    if (!this._context) {
+      try {
         const tempProfile = path.join(require('os').tmpdir(), `nexus-session-${Date.now()}`);
         this._context = await chromium.launchPersistentContext(tempProfile, {
-          ...launchOptions,
-          channel: 'chrome',
-        }).catch(async () => {
-          return await chromium.launchPersistentContext(tempProfile, launchOptions);
+          headless: false,
+          viewport: null,
+          slowMo: config.browser.slowMo || 0,
+          args: ['--start-maximized', '--no-sandbox', '--disable-setuid-sandbox'],
         });
-        console.log('[BrowserRuntime] Launched standalone visible browser window.');
+        console.log('[BrowserRuntime] Launched fallback Chromium window.');
+      } catch (err3) {
+        throw new Error(`[BrowserRuntime] All Chrome launch strategies failed. Last error: ${err3.message}`);
       }
     }
 
