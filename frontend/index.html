@@ -946,7 +946,6 @@
       </div>
       <div class="pill-content">
         <span class="pill-title" id="pill-title">Nexus</span>
-        <span class="pill-face" id="pill-face">( •_•)</span>
         <span class="pill-divider" id="pill-divider"></span>
         <span class="pill-status" id="pill-status"></span>
         <div class="pill-shortcut" id="pill-shortcut">
@@ -1394,7 +1393,6 @@
     /* ─── DOM References ─── */
     const pill = document.getElementById('nexus-pill');
     const pillTitle = document.getElementById('pill-title');
-    const pillFace = document.getElementById('pill-face');
     const pillDivider = document.getElementById('pill-divider');
     const pillStatus = document.getElementById('pill-status');
     const pillOrb = document.getElementById('pill-orb');
@@ -1476,17 +1474,14 @@
 
       stateText.textContent = meta.label;
 
-      // Update Collapsed Pill: In IDLE -> just "Nexus", in WORKING -> face + status
+      // Update Collapsed Pill: Clean presentation without faces
       if (agentState === AGENT_STATES.IDLE) {
         pillTitle.textContent = 'Nexus';
-        pillFace.style.display = 'none';
         pillDivider.style.display = 'none';
         pillStatus.style.display = 'none';
         pillShortcut.style.display = 'flex';
       } else {
         pillTitle.textContent = 'Nexus';
-        pillFace.textContent = meta.face;
-        pillFace.style.display = 'inline-flex';
         pillDivider.style.display = 'block';
         pillStatus.textContent = customStatus || meta.pillText;
         pillStatus.style.display = 'inline-block';

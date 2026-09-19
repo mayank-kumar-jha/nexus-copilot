@@ -49,8 +49,19 @@ class BrowserRuntime {
       fs.mkdirSync(userDataDir, { recursive: true });
     }
 
+    // Clean up any stale Singleton lock file from previous crashed runs
+    try {
+      const lockFile = path.join(userDataDir, 'SingletonLock');
+      if (fs.existsSync(lockFile)) fs.unlinkSync(lockFile);
+      const cookieFile = path.join(userDataDir, 'SingletonCookie');
+      if (fs.existsSync(cookieFile)) fs.unlinkSync(cookieFile);
+    } catch {}
+
     const launchArgs = [
       '--start-maximized',
+      '--disable-background-mode',
+      '--disable-backgrounding-occluded-windows',
+      '--disable-features=CalculateNativeWinOcclusion',
       '--no-sandbox',
       '--disable-setuid-sandbox',
       '--disable-blink-features=AutomationControlled',
