@@ -10,6 +10,9 @@ backend/.env
 # Browser Profiles & Cache
 user-data/
 backend/user-data/
+chromium-data/
+backend/chromium-data/
+*test*data/
 screenshots/
 backend/screenshots/
 

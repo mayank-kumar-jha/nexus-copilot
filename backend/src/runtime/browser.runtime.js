@@ -53,8 +53,6 @@ class BrowserRuntime {
       if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
     }
 
-    // ── Kill background Chrome ghosts before any Chrome launch attempt ────────
-    await this._killBackgroundChrome(chromeDataDir);
 
     // ── Clean stale locks in both dirs ───────────────────────────────────────
     for (const d of [chromiumDataDir, chromeDataDir]) {
@@ -96,7 +94,6 @@ class BrowserRuntime {
 
     // ── Strategy 2: Real Google Chrome via executablePath ────────────────────
     // Used only if Chromium failed. Shares user's Chrome profile & saved logins.
-    // May be invisible if ghost Chrome processes are still alive.
     if (!this._context) {
       usedDataDir = chromeDataDir;
       const chromeExe = [
@@ -137,6 +134,7 @@ class BrowserRuntime {
       }
     }
 
+    this._usedDataDir = usedDataDir;
     console.log(`[BrowserRuntime] Using data dir: ${usedDataDir}`);
 
     this._context.on('close', () => {
@@ -152,6 +150,7 @@ class BrowserRuntime {
       this._page.setDefaultNavigationTimeout(config.browser.navigationTimeout || 30000);
       this._page.setDefaultTimeout(config.browser.navigationTimeout || 30000);
       try { await newPage.bringToFront(); await newPage.waitForLoadState('domcontentloaded'); } catch {}
+      this._forceWindowVisible(this._usedDataDir).catch(() => {});
     });
 
     const pages = this._context.pages().filter(p => !p.isClosed());
@@ -161,8 +160,8 @@ class BrowserRuntime {
 
     try { await this._page.bringToFront(); } catch {}
 
-    // Force window to front using Win32 API via temp .ps1
-    await this._forceWindowVisible();
+    // Force window to front
+    await this._forceWindowVisible(usedDataDir);
 
     this._launched = true;
   }
@@ -192,82 +191,34 @@ class BrowserRuntime {
   }
 
   /**
-   * Kill all Chrome processes that have no visible window (ghost background processes).
-   * Uses a temp .ps1 file so PowerShell gets proper multi-line syntax.
-   */
-  async _killBackgroundChrome(ourUserDataDir) {
-    const { execFileSync } = require('child_process');
-    const os = require('os');
-    const safeDir = ourUserDataDir.replace(/\\/g, '\\\\');
-    const ps1 = path.join(os.tmpdir(), `nexus-ghost-kill-${Date.now()}.ps1`);
-
-    // Write script to temp file — inline PS1 breaks when \n becomes a space
-    const script = [
-      `$ourDir = [IO.Path]::GetFullPath('${safeDir}').ToLower()`,
-      `$procs = Get-WmiObject Win32_Process -Filter "Name='chrome.exe'"`,
-      `foreach ($p in $procs) {`,
-      `  $cmd = $p.CommandLine`,
-      `  if (-not $cmd) { continue }`,
-      `  $hasOurDir = $cmd.ToLower().Contains($ourDir)`,
-      `  $isSub = $cmd -match '--type=(renderer|gpu-process|utility|crashpad|ppapi|broker)'`,
-      `  if ($hasOurDir -or $isSub) { continue }`,
-      `  $proc = Get-Process -Id $p.ProcessId -ErrorAction SilentlyContinue`,
-      `  if ($proc -and $proc.MainWindowHandle -eq 0) {`,
-      `    Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue`,
-      `    Write-Host "Killed ghost Chrome PID=$($p.ProcessId)"`,
-      `  }`,
-      `}`,
-    ].join('\r\n');
-
-    try {
-      fs.writeFileSync(ps1, script, 'utf8');
-      const result = execFileSync('powershell.exe', [
-        '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', ps1,
-      ], { timeout: 10000, encoding: 'utf8' }).trim();
-      if (result) console.log('[BrowserRuntime] Ghost cleanup:', result.replace(/\r?\n/g, ', '));
-    } catch (err) {
-      console.warn('[BrowserRuntime] Ghost cleanup skipped:', err.message.split('\n')[0]);
-    } finally {
-      try { fs.unlinkSync(ps1); } catch {}
-    }
-
-    await new Promise(r => setTimeout(r, 1000));
-  }
-
-  /**
    * Force the Playwright browser window to be visible on screen.
-   * Uses Windows API (ShowWindow + SetForegroundWindow) via a temp .ps1 file.
+   * Uses Windows WScript.Shell AppActivate targeting ONLY this instance's data dir.
    */
-  async _forceWindowVisible() {
+  async _forceWindowVisible(dataDir) {
+    if (!dataDir) return;
     const { execFileSync } = require('child_process');
     const os = require('os');
-    const userDataDir = path.resolve(__dirname, '../../user-data');
-    const safeDir = userDataDir.replace(/\\/g, '\\\\');
+    const safeDir = dataDir.replace(/\\/g, '\\\\').toLowerCase();
     const ps1 = path.join(os.tmpdir(), `nexus-show-win-${Date.now()}.ps1`);
 
     const script = [
-      `Add-Type -TypeDefinition @"`,
-      `using System;`,
-      `using System.Runtime.InteropServices;`,
-      `public class NexusWin32 {`,
-      `  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);`,
-      `  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);`,
-      `  [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr hWnd);`,
-      `}`,
-      `"@`,
-      `$ourDir = '${safeDir}'.ToLower()`,
-      `$procs = Get-WmiObject Win32_Process -Filter "Name='chrome.exe' OR Name='chromium.exe'"`,
-      `foreach ($p in $procs) {`,
-      `  $cmd = $p.CommandLine`,
-      `  if (-not $cmd) { continue }`,
-      `  if (-not $cmd.ToLower().Contains($ourDir)) { continue }`,
-      `  if ($cmd -match '--type=') { continue }`,
-      `  $proc = Get-Process -Id $p.ProcessId -ErrorAction SilentlyContinue`,
-      `  if (-not $proc) { continue }`,
-      `  [NexusWin32]::ShowWindow($proc.MainWindowHandle, 9) | Out-Null`,
-      `  [NexusWin32]::BringWindowToTop($proc.MainWindowHandle) | Out-Null`,
-      `  [NexusWin32]::SetForegroundWindow($proc.MainWindowHandle) | Out-Null`,
-      `  Write-Host "Focused PID=$($p.ProcessId) HWND=$($proc.MainWindowHandle)"`,
+      `$safeDir = '${safeDir}'.ToLower()`,
+      `$wshell = New-Object -ComObject WScript.Shell`,
+      `for ($i = 0; $i -lt 5; $i++) {`,
+      `  $procs = Get-WmiObject Win32_Process -Filter "Name='chrome.exe' OR Name='chromium.exe'"`,
+      `  foreach ($p in $procs) {`,
+      `    $cmd = $p.CommandLine`,
+      `    if (-not $cmd) { continue }`,
+      `    if (-not $cmd.ToLower().Contains($safeDir)) { continue }`,
+      `    if ($cmd -match '--type=') { continue }`,
+      `    $proc = Get-Process -Id $p.ProcessId -ErrorAction SilentlyContinue`,
+      `    if ($proc -and $proc.MainWindowHandle -ne 0) {`,
+      `      $wshell.AppActivate($p.ProcessId) | Out-Null`,
+      `      Write-Host "Focused PID=$($p.ProcessId) HWND=$($proc.MainWindowHandle)"`,
+      `      exit 0`,
+      `    }`,
+      `  }`,
+      `  Start-Sleep -Milliseconds 250`,
       `}`,
     ].join('\r\n');
 
@@ -275,10 +226,10 @@ class BrowserRuntime {
       fs.writeFileSync(ps1, script, 'utf8');
       const result = execFileSync('powershell.exe', [
         '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', ps1,
-      ], { timeout: 8000, encoding: 'utf8' }).trim();
+      ], { timeout: 5000, encoding: 'utf8' }).trim();
       if (result) console.log('[BrowserRuntime] Window focus:', result);
     } catch (err) {
-      console.warn('[BrowserRuntime] Window focus skipped:', err.message.split('\n')[0]);
+      // Non-fatal
     } finally {
       try { fs.unlinkSync(ps1); } catch {}
     }
