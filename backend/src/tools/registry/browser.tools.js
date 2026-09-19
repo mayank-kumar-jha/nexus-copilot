@@ -146,6 +146,19 @@ const extractTextTool = {
   },
 };
 
+const askUserTool = {
+  name: 'ask_user',
+  description: 'Ask the user a question, request missing credentials, or ask for access permission (e.g. asking for login details or asking for access permission on ChatGPT), and pause execution until the user answers.',
+  schema: {
+    question: { type: 'string', required: true, description: 'The clear, conversational question to ask the user' },
+    context: { type: 'string', required: false, description: 'Context or reason why this information or access is needed' },
+  },
+  riskLevel: 'SAFE',
+  execute: async (args) => {
+    return { question: args.question, context: args.context, waitingForUser: true };
+  },
+};
+
 // ─── Factory ──────────────────────────────────────────────────────────────────
 
 /**
@@ -165,6 +178,7 @@ function createBrowserToolRegistry() {
   registry.register(backTool);
   registry.register(screenshotTool);
   registry.register(submitFormTool);
+  registry.register(askUserTool);
   return registry;
 }
 

@@ -139,7 +139,8 @@ class AgentController {
         });
       }
 
-      const approvedAction = task.approve('human_api');
+      const userResponse = req.body?.response || req.body?.input || 'Approved / Access Granted';
+      const approvedAction = task.approve('human_api', userResponse);
       const sessionInfo = this._sessions.tasks.get(id);
 
       // Continue execution

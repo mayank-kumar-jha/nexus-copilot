@@ -99,12 +99,13 @@ class TaskGraph {
     this._transition('waiting_for_user');
   }
 
-  approve(approvedBy = 'user') {
+  approve(approvedBy = 'user', userResponse = null) {
     if (this.status !== 'waiting_for_user') {
       throw new Error(`TaskGraph: Cannot approve task in status "${this.status}"`);
     }
     const approval = this.pendingApproval;
     this.pendingApproval = null;
+    this.lastUserResponse = userResponse || 'Approved / Access Granted';
     this._transition('running');
     return approval;
   }

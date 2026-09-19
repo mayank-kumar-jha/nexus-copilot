@@ -128,6 +128,17 @@ class AgentOrchestrator {
     if (task.isTerminal || task.status === 'cancelled') {
       return { error: 'Task cancelled by user', terminal: true };
     }
+
+    if (task.lastUserResponse) {
+      memory.add({
+        action: 'user_response',
+        reasoning: 'User responded to agent question or granted authorization',
+        outcome: `User response: "${task.lastUserResponse}"`,
+        success: true,
+      });
+      task.lastUserResponse = null;
+    }
+
     this._emitRealtime('step:started', { taskId: task.id, stepNumber });
 
     // ── 1. OBSERVE ────────────────────────────────────────────────────────────
@@ -249,7 +260,23 @@ class AgentOrchestrator {
       return { error: 'No tool decided by agent', terminal: false };
     }
 
-    // ── 3. APPROVAL CHECK ─────────────────────────────────────────────────────
+    // ── 3. APPROVAL CHECK & INTERACTIVE USER QUESTIONS ───────────────────────
+    if (decision.tool === 'ask_user') {
+      const q = decision.arguments?.question || decision.reasoning || 'Nexus is requesting your input or access permission to continue.';
+      task.waitForApproval({
+        stepNumber,
+        tool: 'ask_user',
+        arguments: decision.arguments || {},
+        question: q,
+        context: decision.arguments?.context || '',
+        reason: q,
+        reasoning: decision.reasoning,
+        isQuestion: true,
+      });
+      this._emitRealtime('task:approval_required', task.pendingApproval);
+      return { requiresApproval: true, approvalRequest: task.pendingApproval };
+    }
+
     if (!bypassApproval) {
       const toolDef = this._registry.get(decision.tool);
       if (toolDef) {

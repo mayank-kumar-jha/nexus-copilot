@@ -1050,20 +1050,24 @@
         </div>
       </div>
 
-      <!-- Human In The Loop Approval Banner -->
+      <!-- Human In The Loop Approval & Interactive Question Banner -->
       <div class="approval-banner" id="approval-banner">
         <div class="approval-header">
-          <span class="approval-tag">
-            <span>⚠️</span> Security Approval Required
+          <span class="approval-tag" id="approval-tag">
+            <span id="approval-icon">💬</span> <span id="approval-tag-text">Nexus Authorization & Question</span>
           </span>
         </div>
-        <div class="approval-body" id="approval-reason">
-          The agent is requesting permission to execute a sensitive action.
+        <div class="approval-body" id="approval-reason" style="font-size: 12.5px; line-height: 1.45; font-weight: 500; color: #f1f5f9;">
+          Nexus is requesting authorization or details to proceed.
         </div>
-        <div class="approval-details" id="approval-details"></div>
-        <div class="approval-actions">
-          <button class="btn-approve" id="btn-approve-action">Approve & Resume</button>
-          <button class="btn-deny" id="btn-deny-action">Deny / Cancel</button>
+        <div class="approval-details" id="approval-details" style="display:none;"></div>
+        <div class="approval-input-box" id="approval-input-box" style="margin: 8px 0 6px 0; display: flex; gap: 6px;">
+          <input type="text" id="approval-reply-input" placeholder="Type credentials / reply or say 'access' with Shift+1..." style="flex: 1; background: rgba(0,0,0,0.45); border: 1px solid rgba(255,255,255,0.18); border-radius: 7px; padding: 6px 10px; color: #fff; font-size: 11.5px; outline: none;" />
+          <button class="btn-approve" id="btn-reply-action" style="padding: 5px 12px; font-size: 11px; white-space: nowrap;">Send Reply</button>
+        </div>
+        <div class="approval-actions" style="margin-top: 4px;">
+          <button class="btn-approve" id="btn-approve-action">✅ Grant Access / Proceed</button>
+          <button class="btn-deny" id="btn-deny-action">Cancel Task</button>
         </div>
       </div>
 
@@ -1633,6 +1637,10 @@
           if (text && text.trim().length > 0) {
             text = text.replace(/^(hey\s+|hi\s+|ok\s+|okay\s+)?nexus[,:\s]*/i, '').trim();
             if (text.length > 0) {
+              if (approvalBanner.style.display === 'block' && State.task?.id) {
+                sendApprovalResponse(text);
+                return;
+              }
               goalInput.value = text;
               addLog('VOICE', `Recognized: "${text}"`, 'tag-done');
               submitGoal(text);
@@ -1752,30 +1760,46 @@
       }
     });
 
-    /* ─── Human In The Loop Approvals ─── */
+    /* ─── Human In The Loop Approvals & Interactive Questions ─── */
     function promptApproval(approvalData) {
       State.pendingApproval = approvalData;
-      setAgentState(AGENT_STATES.WAITING, 'Approval needed!');
+      setAgentState(AGENT_STATES.WAITING, 'Question / Auth');
       approvalBanner.style.display = 'block';
-      approvalReason.textContent = approvalData.reason || 'This action requires your confirmation to proceed.';
-      const toolName = approvalData.tool || 'Action';
-      const args = JSON.stringify(approvalData.arguments || {});
-      approvalDetails.textContent = `${toolName} ${args}`;
-      addLog('APPROVAL', `Approval requested: ${toolName}`, 'tag-warn');
+      
+      const isQuestion = approvalData.isQuestion || approvalData.tool === 'ask_user';
+      const iconEl = document.getElementById('approval-icon');
+      const tagTextEl = document.getElementById('approval-tag-text');
+      if (iconEl) iconEl.textContent = isQuestion ? '💬' : '⚠️';
+      if (tagTextEl) tagTextEl.textContent = isQuestion ? 'Nexus Needs Your Input / Access' : 'Security Confirmation Required';
+      
+      const questionText = approvalData.question || approvalData.reason || 'Nexus needs your input or access permission to proceed.';
+      approvalReason.textContent = questionText;
+      
+      const replyInput = document.getElementById('approval-reply-input');
+      if (replyInput) {
+        replyInput.value = '';
+        setTimeout(() => replyInput.focus(), 120);
+      }
+
+      addLog('NEXUS', questionText, 'tag-warn');
       if (!State.isExpanded) {
-        pillStatus.textContent = `⚠️ Approve ${toolName}`;
+        pillStatus.textContent = isQuestion ? `💬 ${questionText.substring(0, 22)}...` : `⚠️ Approve ${approvalData.tool || 'Action'}`;
       }
     }
 
-    btnApprove.addEventListener('click', async () => {
+    async function sendApprovalResponse(customResponse) {
       if (!State.task?.id) return;
+      const replyInput = document.getElementById('approval-reply-input');
+      const responseText = customResponse || (replyInput ? replyInput.value.trim() : '') || 'access';
+      
       approvalBanner.style.display = 'none';
-      addLog('AUTH', 'User approved action. Resuming execution…', 'tag-done');
+      addLog('USER', `"${responseText}"`, 'tag-done');
       setAgentState(AGENT_STATES.ACTING, 'Resuming…');
       try {
         const res = await fetch(`${API_URL}/agent/tasks/${State.task.id}/approve`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' }
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ response: responseText, input: responseText })
         });
         const data = await res.json();
         if (!data.success) {
@@ -1783,6 +1807,15 @@
         }
       } catch (err) {
         addLog('ERROR', `Approval request failed: ${err.message}`, 'tag-err');
+      }
+    }
+
+    btnApprove.addEventListener('click', () => sendApprovalResponse('access'));
+    document.getElementById('btn-reply-action')?.addEventListener('click', () => sendApprovalResponse());
+    document.getElementById('approval-reply-input')?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        sendApprovalResponse();
       }
     });
 
@@ -1956,10 +1989,22 @@
         case 'decision:made':
           const decision = data.decision || {};
           if (decision.tool) {
-            setAgentState(AGENT_STATES.ACTING, `Acting: ${decision.tool}`);
-            addLog('DECIDE', `${decision.tool} — ${decision.reasoning || ''}`, 'tag-act');
+            let friendlyLabel = decision.reasoning || `Acting: ${decision.tool}`;
+            if (decision.tool === 'ask_user') {
+              friendlyLabel = decision.arguments?.question || decision.reasoning || 'Asking for your input / access permission…';
+            } else if (decision.tool === 'browser.navigate') {
+              friendlyLabel = decision.reasoning || `Heading to ${decision.arguments?.url || 'target page'}…`;
+            } else if (decision.tool === 'browser.type') {
+              friendlyLabel = decision.reasoning || 'Entering prompt / input…';
+            } else if (decision.tool === 'browser.click') {
+              friendlyLabel = decision.reasoning || 'Clicking button / link…';
+            } else if (decision.tool === 'browser.wait') {
+              friendlyLabel = decision.reasoning || 'Waiting for page response…';
+            }
+            setAgentState(AGENT_STATES.ACTING, friendlyLabel);
+            addLog('ACTION', friendlyLabel, 'tag-act');
           } else if (decision.taskComplete) {
-            setAgentState(AGENT_STATES.COMPLETED, 'Goal Achieved');
+            setAgentState(AGENT_STATES.COMPLETED, 'Complete');
             showResult(decision.result || decision.reasoning || 'Goal completed!');
           }
           break;
