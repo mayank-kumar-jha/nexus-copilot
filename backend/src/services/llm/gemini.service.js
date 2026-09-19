@@ -315,7 +315,7 @@ class GeminiService {
   /**
    * Agent decision — structured JSON response.
    */
-  async decide(goal, pageState, history, availableTools) {
+  async decide(goal, pageState, history, availableTools, memoryContext = null) {
     const toolList = (availableTools || [])
       .map((t) => `- ${t.name}: ${t.description} (risk: ${t.riskLevel})`)
       .join('\n');
@@ -325,6 +325,10 @@ class GeminiService {
       action: h.action,
       outcome: h.outcome,
     }));
+
+    const memorySnippet = memoryContext
+      ? `\nLONG-TERM MEMORY & RELEVANT EXPERIENCES:\n${JSON.stringify(memoryContext, null, 2)}\n`
+      : '';
 
     const prompt = `${DECISION_SYSTEM_PROMPT}
 
@@ -338,7 +342,7 @@ ${JSON.stringify(pageState.elements?.slice(0, 30) || [], null, 2)}
 
 RECENT HISTORY (last ${recentHistory.length} steps):
 ${JSON.stringify(recentHistory, null, 2)}
-
+${memorySnippet}
 AVAILABLE TOOLS:
 ${toolList}
 

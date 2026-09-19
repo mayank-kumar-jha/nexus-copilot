@@ -52,8 +52,8 @@ class ModelGateway {
    * @param {Array} availableTools
    * @returns {Promise<AgentDecision>}
    */
-  async decide(goal, pageState, history, availableTools) {
-    return this._call(() => this._provider.decide(goal, pageState, history, availableTools));
+  async decide(goal, pageState, history, availableTools, memoryContext = null) {
+    return this._call(() => this._provider.decide(goal, pageState, history, availableTools, memoryContext));
   }
 
   /**

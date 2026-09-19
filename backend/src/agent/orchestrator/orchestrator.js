@@ -94,6 +94,14 @@ class AgentOrchestrator {
 
       if (stepResult.taskComplete) {
         task.complete(stepResult.result || 'Task completed successfully');
+        if (this._longTermMemory) {
+          this._longTermMemory.recordTaskOutcome({
+            goal: task.goal,
+            stepsCount: task.stepCount,
+            success: true,
+            summary: stepResult.result || 'Task completed successfully',
+          }).catch(() => {});
+        }
         break;
       }
 
@@ -165,11 +173,29 @@ class AgentOrchestrator {
 
       task.modelCallCount++;
       try {
+        let memoryContext = null;
+        if (this._longTermMemory) {
+          try {
+            let domain = '';
+            if (observation.pageState?.url && observation.pageState.url.startsWith('http')) {
+              try { domain = new URL(observation.pageState.url).hostname; } catch {}
+            }
+            const [domainPattern, relevantHistory] = await Promise.all([
+              domain ? this._longTermMemory.getDomainPattern(domain) : null,
+              this._longTermMemory.searchRelevant(task.goal, 2),
+            ]);
+            if (domainPattern || (relevantHistory && relevantHistory.length > 0)) {
+              memoryContext = { domainPattern, relevantHistory };
+            }
+          } catch {}
+        }
+
         decision = await this._model.decide(
           task.goal,
           observation.pageState,
           history,
-          availableTools
+          availableTools,
+          memoryContext
         );
       } catch (err) {
         if (task.isTerminal || task.status === 'cancelled') {

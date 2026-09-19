@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node backend/src/server.js",
     "desktop": "electron electron/main.js",
-    "dev": "concurrently \"node backend/src/server.js\" \"electron electron/main.js\""
+    "dev": "concurrently \"node backend/src/server.js\" \"electron electron/main.js\"",
+    "login": "node scripts/login.js"
   },
   "keywords": [
     "ai",
