@@ -87,6 +87,13 @@ class BrowserRuntime {
       '--no-default-browser-check',
       '--disable-popup-blocking',
       '--disable-notifications',
+      '--disable-gpu-shader-disk-cache',
+      '--disable-gpu-program-cache',
+      '--disable-backgrounding-occluded-windows',
+      '--disable-breakpad',
+      '--disable-component-update',
+      '--disable-session-crashed-bubble',
+      '--disable-infobars',
     ];
 
     const baseOpts = {

@@ -69,14 +69,27 @@ async function startElectron() {
   });
 }
 
-async function main() {
-  const running = await isServerRunning();
-  if (!running) {
-    await startServer();
-  } else {
-    console.log('[Nexus] Backend server already running on port 3000');
-  }
+function freePort(port) {
+  try {
+    const { execSync } = require('child_process');
+    const out = execSync(`netstat -ano | findstr :${port}`).toString();
+    const lines = out.split('\n').filter((l) => l.includes('LISTENING') || l.includes('LISTEN'));
+    for (const line of lines) {
+      const parts = line.trim().split(/\s+/);
+      const pid = parts[parts.length - 1];
+      if (pid && pid !== '0' && pid !== String(process.pid)) {
+        try { execSync(`taskkill /F /PID ${pid}`); } catch {}
+      }
+    }
+  } catch {}
+}
 
+async function main() {
+  // Always free port 3000 to guarantee fresh code is loaded
+  freePort(3000);
+  await new Promise((r) => setTimeout(r, 600));
+
+  await startServer();
   await startElectron();
 }
 
