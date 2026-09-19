@@ -73,10 +73,7 @@ class BrowserRuntime {
     const extraArgs = [
       '--start-maximized',
       '--window-size=1280,800',
-      '--window-position=80,80',
-      '--disable-background-mode',
-      '--disable-backgrounding-occluded-windows',
-      '--disable-features=CalculateNativeWinOcclusion',
+      '--window-position=60,60',
       '--no-sandbox',
       '--disable-setuid-sandbox',
       '--no-first-run',
@@ -88,30 +85,38 @@ class BrowserRuntime {
     const baseOpts = { headless: false, viewport: null, args: extraArgs, slowMo: config.browser.slowMo || 0 };
 
     const tried = [];
-    let usedDataDir = chromiumDataDir;
+    let usedDataDir = chromeDataDir;
 
-    // ── Strategy 1: Playwright Bundled Chromium into LocalAppData ────────────
+    // ── Strategy 1: Real Google Chrome via channel:'chrome' (PRIMARY) ─────────
+    // ✅ Uses real Google Chrome installed on your Windows machine
+    // ✅ Real taskbar icon, native OS window, GPU acceleration
     try {
-      this._context = await chromium.launchPersistentContext(chromiumDataDir, { ...baseOpts });
-      console.log('[BrowserRuntime] ✓ Launched Playwright Chromium (persistent profile).');
+      this._context = await chromium.launchPersistentContext(chromeDataDir, {
+        ...baseOpts,
+        channel: 'chrome',
+      });
+      console.log('[BrowserRuntime] ✓ Launched Google Chrome (primary).');
     } catch (e) {
-      tried.push(`Bundled Chromium (persistent): ${e.message.split('\n')[0]}`);
-      cleanLocks(chromiumDataDir);
+      tried.push(`Chrome channel (primary): ${e.message.split('\n')[0]}`);
+      cleanLocks(chromeDataDir);
     }
 
-    // ── Strategy 2: Bundled Chromium with Fresh Profile (if ProcessSingleton locked)
+    // ── Strategy 2: Real Google Chrome with fresh profile (if Singleton locked)
     if (!this._context) {
-      const freshDataDir = `${chromiumDataDir}-${Date.now()}`;
+      const freshDataDir = `${chromeDataDir}-${Date.now()}`;
       try {
-        this._context = await chromium.launchPersistentContext(freshDataDir, { ...baseOpts });
+        this._context = await chromium.launchPersistentContext(freshDataDir, {
+          ...baseOpts,
+          channel: 'chrome',
+        });
         usedDataDir = freshDataDir;
-        console.log('[BrowserRuntime] ✓ Launched Playwright Chromium (fresh profile fallback).');
+        console.log('[BrowserRuntime] ✓ Launched Google Chrome (fresh profile fallback).');
       } catch (e) {
-        tried.push(`Bundled Chromium (fresh profile): ${e.message.split('\n')[0]}`);
+        tried.push(`Chrome channel (fresh profile): ${e.message.split('\n')[0]}`);
       }
     }
 
-    // ── Strategy 3: Real Google Chrome via executablePath ────────────────────
+    // ── Strategy 3: Real Google Chrome via explicit executablePath ───────────
     if (!this._context) {
       usedDataDir = chromeDataDir;
       const chromeExe = [
@@ -129,26 +134,44 @@ class BrowserRuntime {
             ...baseOpts,
             executablePath: chromeExe,
           });
-          console.log(`[BrowserRuntime] ✓ Launched Google Chrome fallback: ${chromeExe}`);
+          console.log(`[BrowserRuntime] ✓ Launched Google Chrome via executablePath: ${chromeExe}`);
         } catch (e) {
           tried.push(`Chrome executablePath: ${e.message.split('\n')[0]}`);
         }
       }
     }
 
-    // ── Strategy 4: Standard Non-Persistent chromium.launch (100% Guaranteed Fail-Safe)
-    // Never fails due to profile locks, always creates a fresh top-level OS window
+    // ── Strategy 4: Bundled Playwright Chromium ──────────────────────────────
+    if (!this._context) {
+      usedDataDir = chromiumDataDir;
+      try {
+        cleanLocks(chromiumDataDir);
+        this._context = await chromium.launchPersistentContext(chromiumDataDir, { ...baseOpts });
+        console.log('[BrowserRuntime] ✓ Launched Playwright Chromium fallback.');
+      } catch (e) {
+        tried.push(`Bundled Chromium: ${e.message.split('\n')[0]}`);
+      }
+    }
+
+    // ── Strategy 5: Standard Non-Persistent Launch (Guaranteed Fail-Safe) ─────
     if (!this._context) {
       try {
-        this._browser = await chromium.launch({ ...baseOpts });
+        this._browser = await chromium.launch({ ...baseOpts, channel: 'chrome' });
         this._context = await this._browser.newContext({ viewport: null });
         usedDataDir = 'ephemeral-session';
-        console.log('[BrowserRuntime] ✓ Launched Playwright Chromium (standard fail-safe).');
+        console.log('[BrowserRuntime] ✓ Launched Google Chrome (fail-safe ephemeral).');
       } catch (e) {
-        tried.push(`Standard chromium.launch: ${e.message.split('\n')[0]}`);
-        throw new Error(
-          `[BrowserRuntime] All browser launch strategies failed.\n${tried.map((t, i) => `  ${i + 1}. ${t}`).join('\n')}`
-        );
+        try {
+          this._browser = await chromium.launch({ ...baseOpts });
+          this._context = await this._browser.newContext({ viewport: null });
+          usedDataDir = 'ephemeral-session';
+          console.log('[BrowserRuntime] ✓ Launched Chromium (fail-safe ephemeral).');
+        } catch (err2) {
+          tried.push(`Fail-safe: ${err2.message.split('\n')[0]}`);
+          throw new Error(
+            `[BrowserRuntime] All browser launch strategies failed.\n${tried.map((t, i) => `  ${i + 1}. ${t}`).join('\n')}`
+          );
+        }
       }
     }
 
