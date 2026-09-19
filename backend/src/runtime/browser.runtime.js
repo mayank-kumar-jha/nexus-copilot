@@ -69,11 +69,19 @@ class BrowserRuntime {
     cleanLocks(chromiumDataDir);
     cleanLocks(chromeDataDir);
 
+    // ── Isolated Cache Directory (prevents Windows 0x5 Access is denied lock errors)
+    const cacheDir = path.join(os.tmpdir(), `nexus-cache-${Date.now()}`);
+
     // ── Common launch args ────────────────────────────────────────────────────
     const extraArgs = [
       '--start-maximized',
       '--window-size=1280,800',
       '--window-position=60,60',
+      `--disk-cache-dir=${cacheDir}`,
+      '--disable-gpu-shader-disk-cache',
+      '--disable-gpu-program-cache',
+      '--disable-gpu-cache',
+      '--disable-http-cache',
       '--no-sandbox',
       '--disable-setuid-sandbox',
       '--no-first-run',
