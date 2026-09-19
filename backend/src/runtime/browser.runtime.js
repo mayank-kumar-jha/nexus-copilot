@@ -285,13 +285,14 @@ class BrowserRuntime {
 
   /**
    * Navigate to a URL.
-   * Waits until the network is mostly idle before returning.
+   * Waits until the DOM content is loaded or page is committed.
    *
    * @param {string} url - Must be an absolute URL.
    * @returns {Promise<{ url: string, title: string }>}
    */
   async navigate(url) {
     await this.ensureReady();
+    const page = this.getActivePage() || this._page;
 
     if (!url || !url.startsWith('http')) {
       throw new Error(`BrowserRuntime.navigate: invalid URL "${url}"`);
@@ -299,12 +300,23 @@ class BrowserRuntime {
 
     console.log('[BrowserRuntime] Navigating to %s', url);
 
-    await this._page.goto(url, { waitUntil: 'domcontentloaded' });
+    try {
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
+    } catch (err) {
+      console.warn('[BrowserRuntime] Navigation notice (falling back to commit):', err.message);
+      try {
+        if (!page.isClosed()) {
+          await page.goto(url, { waitUntil: 'commit', timeout: 15000 });
+        }
+      } catch {}
+    }
+
+    try { await page.bringToFront().catch(() => {}); } catch {}
     this.saveStorageState().catch(() => {});
 
     const result = {
-      url: this._page.url(),
-      title: await this._page.title(),
+      url: page.url(),
+      title: await page.title().catch(() => ''),
     };
 
     console.log('[BrowserRuntime] Navigation complete. title="%s"', result.title);
@@ -317,10 +329,11 @@ class BrowserRuntime {
    */
   async goBack() {
     await this.ensureReady();
-    await this._page.goBack({ waitUntil: 'domcontentloaded' });
+    const page = this.getActivePage() || this._page;
+    await page.goBack({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {});
     return {
-      url: this._page.url(),
-      title: await this._page.title(),
+      url: page.url(),
+      title: await page.title().catch(() => ''),
     };
   }
 
