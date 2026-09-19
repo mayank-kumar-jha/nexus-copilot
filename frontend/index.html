@@ -1263,20 +1263,33 @@
 
         if (!base64Data) return '';
 
-        const res = await fetch(`${API_URL}/speech/transcribe`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            audioBase64: base64Data,
-            mimeType: blob.type || 'audio/webm',
-          }),
-        });
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 8000);
 
-        const data = await res.json();
-        if (data.success && data.text) {
-          return data.text.trim();
+        try {
+          const res = await fetch(`${API_URL}/speech/transcribe`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              audioBase64: base64Data,
+              mimeType: blob.type || 'audio/webm',
+            }),
+            signal: controller.signal,
+          });
+          clearTimeout(timeoutId);
+
+          if (res.ok) {
+            const data = await res.json();
+            if (data.success && data.text && data.text !== 'NO_SPEECH') {
+              return data.text.trim();
+            }
+          }
+          return '';
+        } catch (err) {
+          clearTimeout(timeoutId);
+          console.warn('[NexusAudio] Transcription notice:', err.message);
+          return '';
         }
-        return '';
       }
     }
 

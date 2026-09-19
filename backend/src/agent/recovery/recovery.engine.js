@@ -65,11 +65,24 @@ class RecoveryEngine {
     }
 
     // 1. CAPTCHA / Bot detection / Cloudflare
+    if (observation?.pageState?.title?.toLowerCase().includes('just a moment...')) {
+      if (currentRetries <= 2) {
+        return {
+          strategy: RECOVERY_STRATEGIES.RETRY_BACKOFF,
+          backoffMs: 2500,
+          reason: 'Waiting for Cloudflare security transition to complete...',
+        };
+      }
+      return {
+        strategy: RECOVERY_STRATEGIES.REQUEST_USER_HELP,
+        reason: 'Cloudflare challenge page detected. Human intervention required.',
+      };
+    }
+
     if (
       errorMessage.includes('captcha') ||
       errorMessage.includes('cloudflare') ||
-      errorMessage.includes('verify you are human') ||
-      observation?.pageState?.title?.toLowerCase().includes('just a moment...')
+      errorMessage.includes('verify you are human')
     ) {
       return {
         strategy: RECOVERY_STRATEGIES.REQUEST_USER_HELP,
