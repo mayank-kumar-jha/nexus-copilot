@@ -23,6 +23,9 @@ const config = require('../config');
  */
 class BrowserRuntime {
   constructor() {
+    /** @type {import('playwright').Browser | null} */
+    this._browser = null;
+
     /** @type {import('playwright').BrowserContext | null} */
     this._context = null;
 
@@ -33,55 +36,51 @@ class BrowserRuntime {
   }
 
   /**
-   * Launch a persistent Chromium/Chrome instance where all logins and cookies persist.
+   * Save storage state (cookies, local storage, logins) to disk safely.
+   */
+  async saveStorageState() {
+    try {
+      if (this._context) {
+        const os = require('os');
+        const baseLocalDir = process.env.LOCALAPPDATA || os.tmpdir();
+        const appDir = path.join(baseLocalDir, 'NexusCopilot');
+        if (!fs.existsSync(appDir)) fs.mkdirSync(appDir, { recursive: true });
+        const stateFile = path.join(appDir, 'storage-state.json');
+        await this._context.storageState({ path: stateFile }).catch(() => {});
+      }
+    } catch {}
+  }
+
+  /**
+   * Launch Google Chrome or bundled Chromium instance.
    * Safe to call even if already launched (returns existing).
    */
   async launch() {
-    if (this._launched && this._context && this._page && !this._page.isClosed()) {
+    if (this._launched && this._browser && this._browser.isConnected() && this._context && this._page && !this._page.isClosed()) {
       try {
         await this._page.bringToFront().catch(() => {});
+        this._forceWindowVisible().catch(() => {});
         return;
       } catch {}
     }
 
-    // ── Isolated LocalAppData directories (completely outside OneDrive) ──────
-    // Chromium/Chrome SQLite & LevelDB databases cannot run inside OneDrive due to sync locks and quota limits.
-    const os = require('os');
-    const baseLocalDir = process.env.LOCALAPPDATA || os.tmpdir();
-    const chromiumDataDir = path.join(baseLocalDir, 'NexusCopilot', 'chromium-data');
-    const chromeDataDir   = path.join(baseLocalDir, 'NexusCopilot', 'chrome-data');
-    for (const d of [chromiumDataDir, chromeDataDir]) {
-      if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
+    // Clean up any stale handles first
+    if (this._context || this._browser) {
+      try { await this.close(); } catch {}
     }
 
-
-    // ── Helper to clean all lock files in a directory ───────────────────────
-    const cleanLocks = (dir) => {
-      try {
-        const lockNames = ['SingletonLock', 'SingletonCookie', 'SingletonSocket', 'lockfile'];
-        for (const item of lockNames) {
-          try { fs.unlinkSync(path.join(dir, item)); } catch {}
-          try { fs.unlinkSync(path.join(dir, 'Default', item)); } catch {}
-        }
-      } catch {}
-    };
-
-    cleanLocks(chromiumDataDir);
-    cleanLocks(chromeDataDir);
-
-    // ── Isolated Cache Directory (prevents Windows 0x5 Access is denied lock errors)
-    const cacheDir = path.join(os.tmpdir(), `nexus-cache-${Date.now()}`);
+    const os = require('os');
+    const baseLocalDir = process.env.LOCALAPPDATA || os.tmpdir();
+    const appDir = path.join(baseLocalDir, 'NexusCopilot');
+    if (!fs.existsSync(appDir)) fs.mkdirSync(appDir, { recursive: true });
+    const stateFile = path.join(appDir, 'storage-state.json');
 
     // ── Common launch args ────────────────────────────────────────────────────
     const extraArgs = [
+      '--nexus-agent-browser',
       '--start-maximized',
       '--window-size=1280,800',
       '--window-position=60,60',
-      `--disk-cache-dir=${cacheDir}`,
-      '--disable-gpu-shader-disk-cache',
-      '--disable-gpu-program-cache',
-      '--disable-gpu-cache',
-      '--disable-http-cache',
       '--no-sandbox',
       '--disable-setuid-sandbox',
       '--no-first-run',
@@ -90,43 +89,27 @@ class BrowserRuntime {
       '--disable-notifications',
     ];
 
-    const baseOpts = { headless: false, viewport: null, args: extraArgs, slowMo: config.browser.slowMo || 0 };
+    const baseOpts = {
+      headless: false,
+      args: extraArgs,
+      slowMo: config.browser.slowMo || 0,
+    };
 
     const tried = [];
-    let usedDataDir = chromeDataDir;
 
     // ── Strategy 1: Real Google Chrome via channel:'chrome' (PRIMARY) ─────────
-    // ✅ Uses real Google Chrome installed on your Windows machine
-    // ✅ Real taskbar icon, native OS window, GPU acceleration
     try {
-      this._context = await chromium.launchPersistentContext(chromeDataDir, {
+      this._browser = await chromium.launch({
         ...baseOpts,
         channel: 'chrome',
       });
       console.log('[BrowserRuntime] ✓ Launched Google Chrome (primary).');
     } catch (e) {
-      tried.push(`Chrome channel (primary): ${e.message.split('\n')[0]}`);
-      cleanLocks(chromeDataDir);
+      tried.push(`Chrome channel: ${e.message.split('\n')[0]}`);
     }
 
-    // ── Strategy 2: Real Google Chrome with fresh profile (if Singleton locked)
-    if (!this._context) {
-      const freshDataDir = `${chromeDataDir}-${Date.now()}`;
-      try {
-        this._context = await chromium.launchPersistentContext(freshDataDir, {
-          ...baseOpts,
-          channel: 'chrome',
-        });
-        usedDataDir = freshDataDir;
-        console.log('[BrowserRuntime] ✓ Launched Google Chrome (fresh profile fallback).');
-      } catch (e) {
-        tried.push(`Chrome channel (fresh profile): ${e.message.split('\n')[0]}`);
-      }
-    }
-
-    // ── Strategy 3: Real Google Chrome via explicit executablePath ───────────
-    if (!this._context) {
-      usedDataDir = chromeDataDir;
+    // ── Strategy 2: Real Google Chrome via explicit executablePath ───────────
+    if (!this._browser) {
       const chromeExe = [
         'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
         'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
@@ -137,8 +120,7 @@ class BrowserRuntime {
 
       if (chromeExe) {
         try {
-          cleanLocks(chromeDataDir);
-          this._context = await chromium.launchPersistentContext(chromeDataDir, {
+          this._browser = await chromium.launch({
             ...baseOpts,
             executablePath: chromeExe,
           });
@@ -149,42 +131,25 @@ class BrowserRuntime {
       }
     }
 
-    // ── Strategy 4: Bundled Playwright Chromium ──────────────────────────────
-    if (!this._context) {
-      usedDataDir = chromiumDataDir;
+    // ── Strategy 3: Bundled Playwright Chromium ──────────────────────────────
+    if (!this._browser) {
       try {
-        cleanLocks(chromiumDataDir);
-        this._context = await chromium.launchPersistentContext(chromiumDataDir, { ...baseOpts });
+        this._browser = await chromium.launch({ ...baseOpts });
         console.log('[BrowserRuntime] ✓ Launched Playwright Chromium fallback.');
       } catch (e) {
         tried.push(`Bundled Chromium: ${e.message.split('\n')[0]}`);
+        throw new Error(
+          `[BrowserRuntime] All browser launch strategies failed.\n${tried.map((t, i) => `  ${i + 1}. ${t}`).join('\n')}`
+        );
       }
     }
 
-    // ── Strategy 5: Standard Non-Persistent Launch (Guaranteed Fail-Safe) ─────
-    if (!this._context) {
-      try {
-        this._browser = await chromium.launch({ ...baseOpts, channel: 'chrome' });
-        this._context = await this._browser.newContext({ viewport: null });
-        usedDataDir = 'ephemeral-session';
-        console.log('[BrowserRuntime] ✓ Launched Google Chrome (fail-safe ephemeral).');
-      } catch (e) {
-        try {
-          this._browser = await chromium.launch({ ...baseOpts });
-          this._context = await this._browser.newContext({ viewport: null });
-          usedDataDir = 'ephemeral-session';
-          console.log('[BrowserRuntime] ✓ Launched Chromium (fail-safe ephemeral).');
-        } catch (err2) {
-          tried.push(`Fail-safe: ${err2.message.split('\n')[0]}`);
-          throw new Error(
-            `[BrowserRuntime] All browser launch strategies failed.\n${tried.map((t, i) => `  ${i + 1}. ${t}`).join('\n')}`
-          );
-        }
-      }
-    }
-
-    this._usedDataDir = usedDataDir;
-    console.log(`[BrowserRuntime] Using data dir: ${usedDataDir}`);
+    // Create context with preserved storage state if exists
+    const hasState = fs.existsSync(stateFile);
+    this._context = await this._browser.newContext({
+      viewport: null,
+      storageState: hasState ? stateFile : undefined,
+    });
 
     this._context.on('close', () => {
       this._launched = false;
@@ -199,7 +164,7 @@ class BrowserRuntime {
       this._page.setDefaultNavigationTimeout(config.browser.navigationTimeout || 30000);
       this._page.setDefaultTimeout(config.browser.navigationTimeout || 30000);
       try { await newPage.bringToFront(); await newPage.waitForLoadState('domcontentloaded'); } catch {}
-      this._forceWindowVisible(this._usedDataDir).catch(() => {});
+      this._forceWindowVisible().catch(() => {});
     });
 
     const pages = this._context.pages().filter(p => !p.isClosed());
@@ -210,11 +175,10 @@ class BrowserRuntime {
     try { await this._page.bringToFront(); } catch {}
 
     // Force window to front
-    await this._forceWindowVisible(usedDataDir);
+    await this._forceWindowVisible();
 
     this._launched = true;
   }
-
 
   /**
    * Return the latest unclosed active page in the browser context.
@@ -243,7 +207,7 @@ class BrowserRuntime {
    * Force the Playwright browser window to be visible on screen.
    * Uses Win32 API to show, restore, un-minimize, and foreground the Chrome_WidgetWin_1 window.
    */
-  async _forceWindowVisible(dataDir) {
+  async _forceWindowVisible() {
     const { execFile } = require('child_process');
     const scriptPath = path.resolve(__dirname, '../../../scripts/focus-browser.ps1');
     if (!fs.existsSync(scriptPath)) return;
@@ -255,18 +219,17 @@ class BrowserRuntime {
     } catch {}
   }
 
-
   /**
    * Ensure the browser and active page are running and ready.
    * If closed or crashed, automatically re-launches without throwing.
    */
   async ensureReady() {
-    if (this._context) {
+    if (this._context && this._browser && this._browser.isConnected()) {
       const active = this.getActivePage();
       if (active && !active.isClosed()) {
         try {
           await active.bringToFront().catch(() => {});
-          this._forceWindowVisible(this._usedDataDir).catch(() => {});
+          this._forceWindowVisible().catch(() => {});
           return active;
         } catch {}
       }
@@ -275,8 +238,10 @@ class BrowserRuntime {
     // If context died or has no active pages, cleanly re-launch a fresh visible window
     try {
       if (this._context) await this._context.close().catch(() => {});
+      if (this._browser) await this._browser.close().catch(() => {});
     } catch {}
     this._context = null;
+    this._browser = null;
     this._page = null;
     this._launched = false;
 
@@ -290,6 +255,7 @@ class BrowserRuntime {
    */
   async close() {
     try {
+      await this.saveStorageState().catch(() => {});
       if (this._context) await this._context.close().catch(() => {});
       if (this._browser) await this._browser.close().catch(() => {});
     } finally {
@@ -331,7 +297,8 @@ class BrowserRuntime {
     console.log('[BrowserRuntime] Navigating to %s', url);
 
     await this._page.goto(url, { waitUntil: 'domcontentloaded' });
-    this._forceWindowVisible(this._usedDataDir).catch(() => {});
+    this._forceWindowVisible().catch(() => {});
+    this.saveStorageState().catch(() => {});
 
     const result = {
       url: this._page.url(),

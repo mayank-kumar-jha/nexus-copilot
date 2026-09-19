@@ -62,7 +62,7 @@ public class WinForceTop {
 # Find all NexusCopilot browser processes
 $procs = Get-WmiObject Win32_Process -ErrorAction SilentlyContinue | Where-Object {
     $_.CommandLine -and
-    $_.CommandLine.Contains($DataDirPattern) -and
+    ($_.CommandLine.Contains('nexus-agent-browser') -or $_.CommandLine.Contains('NexusCopilot') -or ($_.CommandLine.Contains('--remote-debugging-pipe') -and $_.Name -match 'chrome|msedge')) -and
     $_.CommandLine -notmatch '--type='
 }
 
