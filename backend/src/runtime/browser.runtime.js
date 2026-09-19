@@ -44,11 +44,12 @@ class BrowserRuntime {
       } catch {}
     }
 
-    // ── Two separate user-data directories ───────────────────────────────────
-    // Playwright Chromium uses its own dir (no conflict with user's Chrome profile)
-    // Chrome uses the separate 'user-data' dir (preserves saved logins)
-    const chromiumDataDir = path.resolve(__dirname, '../../chromium-data');
-    const chromeDataDir   = path.resolve(__dirname, '../../user-data');
+    // ── Isolated LocalAppData directories (completely outside OneDrive) ──────
+    // Chromium/Chrome SQLite & LevelDB databases cannot run inside OneDrive due to sync locks and quota limits.
+    const os = require('os');
+    const baseLocalDir = process.env.LOCALAPPDATA || os.tmpdir();
+    const chromiumDataDir = path.join(baseLocalDir, 'NexusCopilot', 'chromium-data');
+    const chromeDataDir   = path.join(baseLocalDir, 'NexusCopilot', 'chrome-data');
     for (const d of [chromiumDataDir, chromeDataDir]) {
       if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
     }

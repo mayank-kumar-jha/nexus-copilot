@@ -175,10 +175,16 @@ app.whenReady().then(async () => {
     session.defaultSession.setPermissionCheckHandler(() => true);
   }
 
-  const running = await isBackendRunning();
+  let running = await isBackendRunning();
+  if (!running) {
+    // Give launch.js server up to 4s to come online first
+    for (let i = 0; i < 10; i++) {
+      await new Promise(r => setTimeout(r, 400));
+      if (await isBackendRunning()) { running = true; break; }
+    }
+  }
   if (!running) {
     startBackendServer();
-    // Wait for server to listen
     for (let i = 0; i < 15; i++) {
       await new Promise(r => setTimeout(r, 400));
       if (await isBackendRunning()) break;
