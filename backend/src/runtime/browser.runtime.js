@@ -49,7 +49,14 @@ class BrowserRuntime {
       fs.mkdirSync(userDataDir, { recursive: true });
     }
 
-    // Clean up any stale Singleton lock file from previous crashed runs
+    // ── Step 1: Kill background Chrome ghost processes ───────────────────────
+    // Windows keeps Chrome running as a "background app" even after the window
+    // is closed. When Playwright tries to launch Chrome, the OS hands the request
+    // to one of these ghost processes, which opens the page in a *hidden* window.
+    // We kill all windowless Chrome processes that are NOT our own session first.
+    await this._killBackgroundChrome(userDataDir);
+
+    // ── Step 2: Clean stale profile locks ───────────────────────────────────
     try {
       const lockFile = path.join(userDataDir, 'SingletonLock');
       if (fs.existsSync(lockFile)) fs.unlinkSync(lockFile);
@@ -57,7 +64,30 @@ class BrowserRuntime {
       if (fs.existsSync(cookieFile)) fs.unlinkSync(cookieFile);
     } catch {}
 
-    // Find Google Chrome executable on Windows
+    // ── Step 3: Build launch args ────────────────────────────────────────────
+    // NOTE: Do NOT use ignoreDefaultArgs:true — Playwright needs its own flags
+    // like --remote-debugging-pipe for CDP to work (agent control of the browser).
+    const extraArgs = [
+      '--start-maximized',
+      '--disable-background-mode',
+      '--disable-backgrounding-occluded-windows',
+      '--disable-features=CalculateNativeWinOcclusion',
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--no-first-run',
+      '--no-default-browser-check',
+      '--disable-popup-blocking',
+      '--disable-notifications',
+    ];
+
+    const launchOptions = {
+      headless: false,
+      viewport: null,
+      args: extraArgs,
+      slowMo: config.browser.slowMo || 0,
+    };
+
+    // Find real Google Chrome executable path
     const chromePaths = [
       'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
       'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
@@ -65,80 +95,47 @@ class BrowserRuntime {
         ? path.join(process.env.LOCALAPPDATA, 'Google', 'Chrome', 'Application', 'chrome.exe')
         : null,
     ].filter(Boolean);
+    const chromeExe = chromePaths.find(p => fs.existsSync(p)) || null;
 
-    let chromeExe = null;
-    for (const p of chromePaths) {
-      if (fs.existsSync(p)) { chromeExe = p; break; }
-    }
-
-    // Key fix: ignoreDefaultArgs strips Playwright's invisible-mode flags:
-    // --remote-debugging-pipe about:blank, --metrics-recording-only,
-    // --disable-features=DestroyProfileOnBrowserClose, etc.
-    // Without these, Chrome opens as a real visible window every time.
-    const launchArgs = [
-      '--start-maximized',
-      '--disable-background-mode',
-      '--disable-backgrounding-occluded-windows',
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--no-first-run',
-      '--no-default-browser-check',
-      '--disable-popup-blocking',
-      '--disable-notifications',
-      '--restore-last-session',
-      `--user-data-dir=${userDataDir}`,
-      'about:blank',
-    ];
-
-    const baseOptions = {
-      headless: false,
-      viewport: null,
-      slowMo: config.browser.slowMo || 0,
-      // Strip ALL of Playwright's automation flags — use our own args list above
-      ignoreDefaultArgs: true,
-      args: launchArgs,
-    };
-
-    // Strategy 1: Use real Google Chrome exe directly (bypasses ALL Playwright automation suppression)
+    // ── Step 4: Launch with 3 fallback strategies ────────────────────────────
+    // Strategy 1: Real Google Chrome via executablePath (keeps saved logins)
     if (chromeExe) {
       try {
         this._context = await chromium.launchPersistentContext(userDataDir, {
-          ...baseOptions,
+          ...launchOptions,
           executablePath: chromeExe,
         });
-        console.log(`[BrowserRuntime] Launched real Google Chrome window via executablePath: ${chromeExe}`);
+        console.log(`[BrowserRuntime] Launched Google Chrome: ${chromeExe}`);
       } catch (err1) {
-        console.warn('[BrowserRuntime] executablePath Chrome failed:', err1.message);
-        chromeExe = null; // fall through to next strategy
+        console.warn('[BrowserRuntime] Chrome executablePath failed:', err1.message);
       }
     }
 
-    // Strategy 2: Playwright channel:'chrome' with ignoreDefaultArgs (fallback)
+    // Strategy 2: Playwright channel:'chrome' (auto-finds Chrome installation)
     if (!this._context) {
       try {
         this._context = await chromium.launchPersistentContext(userDataDir, {
-          ...baseOptions,
+          ...launchOptions,
           channel: 'chrome',
         });
-        console.log('[BrowserRuntime] Launched Chrome via channel with ignoreDefaultArgs.');
+        console.log('[BrowserRuntime] Launched Chrome via Playwright channel.');
       } catch (err2) {
-        console.warn('[BrowserRuntime] channel Chrome failed:', err2.message);
+        console.warn('[BrowserRuntime] Playwright channel Chrome failed:', err2.message);
       }
     }
 
-    // Strategy 3: Bundled Chromium (last resort)
+    // Strategy 3: Bundled Playwright Chromium (last resort — always works)
     if (!this._context) {
       try {
-        const tempProfile = path.join(require('os').tmpdir(), `nexus-session-${Date.now()}`);
-        this._context = await chromium.launchPersistentContext(tempProfile, {
+        this._context = await chromium.launchPersistentContext(userDataDir, {
           headless: false,
           viewport: null,
+          args: extraArgs,
           slowMo: config.browser.slowMo || 0,
-          args: ['--start-maximized', '--no-sandbox', '--disable-setuid-sandbox'],
         });
-        console.log('[BrowserRuntime] Launched fallback Chromium window.');
+        console.log('[BrowserRuntime] Launched bundled Chromium (fallback).');
       } catch (err3) {
-        throw new Error(`[BrowserRuntime] All Chrome launch strategies failed. Last error: ${err3.message}`);
+        throw new Error(`[BrowserRuntime] All launch strategies failed: ${err3.message}`);
       }
     }
 
@@ -193,6 +190,45 @@ class BrowserRuntime {
     } catch {
       return this._page;
     }
+  }
+
+  /**
+   * Kill all Chrome processes that have no visible window (ghost background processes).
+   * These ghosts intercept Playwright's launch request and make Chrome open invisibly.
+   * We only kill processes that don't belong to our own Playwright session (user-data-dir).
+   */
+  async _killBackgroundChrome(ourUserDataDir) {
+    const { execSync } = require('child_process');
+    try {
+      // PowerShell: find chrome.exe processes with no window (MainWindowHandle=0)
+      // that are NOT our own Playwright-controlled Chrome (identified by user-data-dir)
+      const psScript = `
+        $ourDir = [System.IO.Path]::GetFullPath('${ourUserDataDir.replace(/\\/g, '\\\\')}').ToLower()
+        Get-WmiObject Win32_Process -Filter "Name='chrome.exe'" | ForEach-Object {
+          $cmdLine = $_.CommandLine
+          $pid = $_.ProcessId
+          $hasOurDir = $cmdLine -and $cmdLine.ToLower().Contains($ourDir)
+          $isSubProcess = $cmdLine -and ($cmdLine -match '--type=(renderer|gpu-process|utility|crashpad|ppapi)')
+          if (-not $hasOurDir -and -not $isSubProcess) {
+            $proc = Get-Process -Id $pid -ErrorAction SilentlyContinue
+            if ($proc -and $proc.MainWindowHandle -eq 0) {
+              Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
+              Write-Host "Killed background Chrome ghost PID=$pid"
+            }
+          }
+        }
+      `;
+      const result = execSync(`powershell -NoProfile -NonInteractive -Command "${psScript.replace(/\n/g, ' ')}"`, {
+        timeout: 8000,
+        encoding: 'utf8',
+      }).trim();
+      if (result) console.log('[BrowserRuntime] Ghost cleanup:', result.replace(/\n/g, ', '));
+    } catch (err) {
+      // Non-critical — log and continue
+      console.warn('[BrowserRuntime] Ghost Chrome cleanup skipped:', err.message.split('\n')[0]);
+    }
+    // Brief pause to let Windows process the kills
+    await new Promise(r => setTimeout(r, 800));
   }
 
   /**
