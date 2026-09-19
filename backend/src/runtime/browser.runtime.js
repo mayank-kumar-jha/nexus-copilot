@@ -44,25 +44,26 @@ class BrowserRuntime {
       } catch {}
     }
 
-    const userDataDir = path.resolve(__dirname, '../../user-data');
-    if (!fs.existsSync(userDataDir)) {
-      fs.mkdirSync(userDataDir, { recursive: true });
+    // ── Two separate user-data directories ───────────────────────────────────
+    // Playwright Chromium uses its own dir (no conflict with user's Chrome profile)
+    // Chrome uses the separate 'user-data' dir (preserves saved logins)
+    const chromiumDataDir = path.resolve(__dirname, '../../chromium-data');
+    const chromeDataDir   = path.resolve(__dirname, '../../user-data');
+    for (const d of [chromiumDataDir, chromeDataDir]) {
+      if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
     }
 
-    // ── Step 1: Kill background Chrome ghost processes ───────────────────────
-    // Windows keeps Chrome running as "background app" even after closing the window.
-    // Playwright's launch request gets intercepted by these ghost processes, which
-    // open the page in a hidden window that Playwright owns but you can't see.
-    await this._killBackgroundChrome(userDataDir);
+    // ── Kill background Chrome ghosts before any Chrome launch attempt ────────
+    await this._killBackgroundChrome(chromeDataDir);
 
-    // ── Step 2: Clean stale profile locks from previous crashes ─────────────
-    for (const fname of ['SingletonLock', 'SingletonCookie', 'lockfile']) {
-      try { fs.unlinkSync(path.join(userDataDir, fname)); } catch {}
+    // ── Clean stale locks in both dirs ───────────────────────────────────────
+    for (const d of [chromiumDataDir, chromeDataDir]) {
+      for (const f of ['SingletonLock', 'SingletonCookie', 'lockfile']) {
+        try { fs.unlinkSync(path.join(d, f)); } catch {}
+      }
     }
 
-    // ── Step 3: Build launch args ────────────────────────────────────────────
-    // IMPORTANT: Do NOT use ignoreDefaultArgs:true — Playwright needs its own
-    // flags like --remote-debugging-pipe for CDP to work (browser control).
+    // ── Common launch args ────────────────────────────────────────────────────
     const extraArgs = [
       '--start-maximized',
       '--disable-background-mode',
@@ -76,67 +77,67 @@ class BrowserRuntime {
       '--disable-notifications',
     ];
 
-    const baseOpts = {
-      headless: false,
-      viewport: null,
-      args: extraArgs,
-      slowMo: config.browser.slowMo || 0,
-    };
+    const baseOpts = { headless: false, viewport: null, args: extraArgs, slowMo: config.browser.slowMo || 0 };
 
-    // Find real Google Chrome executable (Windows paths)
-    const chromeExe = [
-      'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-      'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-      process.env.LOCALAPPDATA
-        ? path.join(process.env.LOCALAPPDATA, 'Google', 'Chrome', 'Application', 'chrome.exe')
-        : null,
-    ].filter(Boolean).find(p => fs.existsSync(p)) || null;
-
-    // ── Step 4: Launch with fallback chain ───────────────────────────────────
     const tried = [];
+    let usedDataDir = chromiumDataDir;
 
-    // Strategy 1: Real Google Chrome via executablePath (preserves saved logins)
-    if (chromeExe && !this._context) {
-      try {
-        this._context = await chromium.launchPersistentContext(userDataDir, {
-          ...baseOpts,
-          executablePath: chromeExe,
-        });
-        console.log(`[BrowserRuntime] ✓ Launched Google Chrome: ${chromeExe}`);
-      } catch (e) {
-        tried.push(`Chrome executablePath: ${e.message.split('\n')[0]}`);
-        console.warn('[BrowserRuntime] Chrome (executablePath) failed:', e.message.split('\n')[0]);
+    // ── Strategy 1: Playwright's bundled Chromium (PRIMARY) ──────────────────
+    // ✅ Always available  ✅ Always opens a visible window
+    // ✅ Zero conflict with running Chrome  ✅ CDP works perfectly
+    // Only downside: doesn't share Chrome saved logins (can log in during tasks)
+    try {
+      this._context = await chromium.launchPersistentContext(chromiumDataDir, { ...baseOpts });
+      console.log('[BrowserRuntime] ✓ Launched Playwright Chromium (primary, guaranteed visible).');
+    } catch (e) {
+      tried.push(`Bundled Chromium: ${e.message.split('\n')[0]}`);
+      console.warn('[BrowserRuntime] Chromium failed:', e.message.split('\n')[0]);
+    }
+
+    // ── Strategy 2: Real Google Chrome via executablePath ────────────────────
+    // Used only if Chromium failed. Shares user's Chrome profile & saved logins.
+    // May be invisible if ghost Chrome processes are still alive.
+    if (!this._context) {
+      usedDataDir = chromeDataDir;
+      const chromeExe = [
+        'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+        'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+        process.env.LOCALAPPDATA
+          ? path.join(process.env.LOCALAPPDATA, 'Google', 'Chrome', 'Application', 'chrome.exe')
+          : null,
+      ].filter(Boolean).find(p => fs.existsSync(p)) || null;
+
+      if (chromeExe) {
+        try {
+          this._context = await chromium.launchPersistentContext(chromeDataDir, {
+            ...baseOpts,
+            executablePath: chromeExe,
+          });
+          console.log(`[BrowserRuntime] ✓ Launched Google Chrome fallback: ${chromeExe}`);
+        } catch (e) {
+          tried.push(`Chrome executablePath: ${e.message.split('\n')[0]}`);
+          console.warn('[BrowserRuntime] Chrome failed:', e.message.split('\n')[0]);
+        }
       }
     }
 
-    // Strategy 2: Playwright channel:'chrome' auto-resolver
+    // ── Strategy 3: Playwright channel:'chrome' (last resort) ────────────────
     if (!this._context) {
+      usedDataDir = chromeDataDir;
       try {
-        this._context = await chromium.launchPersistentContext(userDataDir, {
-          ...baseOpts,
-          channel: 'chrome',
+        this._context = await chromium.launchPersistentContext(chromeDataDir, {
+          ...baseOpts, channel: 'chrome',
         });
-        console.log('[BrowserRuntime] ✓ Launched Chrome via Playwright channel.');
+        console.log('[BrowserRuntime] ✓ Launched Chrome via Playwright channel (last resort).');
       } catch (e) {
         tried.push(`Chrome channel: ${e.message.split('\n')[0]}`);
-        console.warn('[BrowserRuntime] Chrome (channel) failed:', e.message.split('\n')[0]);
-      }
-    }
-
-    // Strategy 3: Bundled Playwright Chromium — always available, always works
-    if (!this._context) {
-      try {
-        this._context = await chromium.launchPersistentContext(userDataDir, {
-          ...baseOpts,
-        });
-        console.log('[BrowserRuntime] ✓ Launched bundled Playwright Chromium.');
-      } catch (e) {
-        tried.push(`Bundled Chromium: ${e.message.split('\n')[0]}`);
         throw new Error(
           `[BrowserRuntime] All launch strategies failed.\n${tried.map((t, i) => `  ${i + 1}. ${t}`).join('\n')}`
         );
       }
     }
+
+    console.log(`[BrowserRuntime] Using data dir: ${usedDataDir}`);
 
     this._context.on('close', () => {
       this._launched = false;
@@ -150,10 +151,7 @@ class BrowserRuntime {
       this._page = newPage;
       this._page.setDefaultNavigationTimeout(config.browser.navigationTimeout || 30000);
       this._page.setDefaultTimeout(config.browser.navigationTimeout || 30000);
-      try {
-        await newPage.bringToFront();
-        await newPage.waitForLoadState('domcontentloaded');
-      } catch {}
+      try { await newPage.bringToFront(); await newPage.waitForLoadState('domcontentloaded'); } catch {}
     });
 
     const pages = this._context.pages().filter(p => !p.isClosed());
@@ -163,13 +161,12 @@ class BrowserRuntime {
 
     try { await this._page.bringToFront(); } catch {}
 
-    // ── Step 5: Force the browser window to be visually on screen ────────────
-    // Even after bringToFront(), the window can still be behind other apps.
-    // Use Windows API via a temp PowerShell file to guarantee visibility.
+    // Force window to front using Win32 API via temp .ps1
     await this._forceWindowVisible();
 
     this._launched = true;
   }
+
 
   /**
    * Return the latest unclosed active page in the browser context.
