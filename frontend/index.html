@@ -293,17 +293,7 @@
     }
 
     .pill-shortcut {
-      display: flex;
-      align-items: center;
-      gap: 2px;
-      font-family: var(--font-mono);
-      font-size: 9.5px;
-      color: var(--text-dim);
-      background: rgba(255, 255, 255, 0.05);
-      border: 1px solid rgba(255, 255, 255, 0.09);
-      border-radius: 5px;
-      padding: 1px 5px;
-      margin-left: 2px;
+      display: none !important;
     }
 
     /* ─── Expanded Assistant Card ─── */
@@ -938,7 +928,7 @@
   <div class="nexus-island-wrapper">
 
     <!-- 1. Compact Floating Pill (Desktop Overlay Idle / Collapsed) -->
-    <div class="nexus-pill" id="nexus-pill" title="Nexus Autonomous Assistant • Hold Shift+1 to talk">
+    <div class="nexus-pill" id="nexus-pill" title="Nexus Autonomous Assistant • Click to open">
       <div class="nexus-orb" id="pill-orb">
         <svg viewBox="0 0 24 24" id="pill-orb-icon">
           <path d="M12 2L14.4 8.6L21 11L14.4 13.4L12 20L9.6 13.4L3 11L9.6 8.6L12 2Z" />
@@ -948,9 +938,6 @@
         <span class="pill-title" id="pill-title">Nexus</span>
         <span class="pill-divider" id="pill-divider"></span>
         <span class="pill-status" id="pill-status"></span>
-        <div class="pill-shortcut" id="pill-shortcut">
-          <span>Shift+1</span>
-        </div>
       </div>
     </div>
 
@@ -1354,13 +1341,13 @@
       },
       [AGENT_STATES.COMPLETED]: {
         label: 'Completed',
-        face: '( ＾◡＾)✨',
-        pillText: 'Done!',
+        face: '',
+        pillText: 'Complete',
         showExtraInPill: true,
       },
       [AGENT_STATES.ERROR]: {
         label: 'Error',
-        face: '( ×_×)🛑',
+        face: '',
         pillText: 'Cancelled',
         showExtraInPill: true,
       }
@@ -1409,7 +1396,6 @@
     const pillDivider = document.getElementById('pill-divider');
     const pillStatus = document.getElementById('pill-status');
     const pillOrb = document.getElementById('pill-orb');
-    const pillShortcut = document.getElementById('pill-shortcut');
     const assistant = document.getElementById('nexus-assistant');
     const assistantOrb = document.getElementById('assistant-orb');
     const stateBadge = document.getElementById('agent-state-badge');
@@ -1480,25 +1466,40 @@
     });
     collapseBtn.addEventListener('click', collapseAssistant);
 
+    let completeResetTimer = null;
+
     /* ─── State Engine & Dynamic Expressive Faces ─── */
     function setAgentState(agentState, customStatus = '') {
+      if (completeResetTimer) {
+        clearTimeout(completeResetTimer);
+        completeResetTimer = null;
+      }
+
       State.state = agentState;
       const meta = STATE_META[agentState] || STATE_META[AGENT_STATES.IDLE];
 
       stateText.textContent = meta.label;
 
-      // Update Collapsed Pill: Clean presentation without faces
+      // Update Collapsed Pill: Minimalist presentation (Icon + Nexus)
       if (agentState === AGENT_STATES.IDLE) {
         pillTitle.textContent = 'Nexus';
         pillDivider.style.display = 'none';
         pillStatus.style.display = 'none';
-        pillShortcut.style.display = 'flex';
       } else {
         pillTitle.textContent = 'Nexus';
         pillDivider.style.display = 'block';
         pillStatus.textContent = customStatus || meta.pillText;
         pillStatus.style.display = 'inline-block';
-        pillShortcut.style.display = 'none';
+      }
+
+      // Auto-fade "Complete" after 3 seconds back to clean "Nexus"
+      if (agentState === AGENT_STATES.COMPLETED) {
+        completeResetTimer = setTimeout(() => {
+          if (State.state === AGENT_STATES.COMPLETED) {
+            pillDivider.style.display = 'none';
+            pillStatus.style.display = 'none';
+          }
+        }, 3000);
       }
 
       // Update Orb and Mic animations
@@ -1632,7 +1633,6 @@
           if (text && text.trim().length > 0) {
             text = text.replace(/^(hey\s+|hi\s+|ok\s+|okay\s+)?nexus[,:\s]*/i, '').trim();
             if (text.length > 0) {
-              expandAssistant();
               goalInput.value = text;
               addLog('VOICE', `Recognized: "${text}"`, 'tag-done');
               submitGoal(text);

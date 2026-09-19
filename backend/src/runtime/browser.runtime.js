@@ -83,6 +83,8 @@ class BrowserRuntime {
       '--window-position=60,60',
       '--no-first-run',
       '--no-default-browser-check',
+      '--no-restore-session-state',
+      '--disable-restore-session-state',
       '--disable-popup-blocking',
       '--disable-notifications',
       '--disable-backgrounding-occluded-windows',
@@ -172,7 +174,13 @@ class BrowserRuntime {
     });
 
     const pages = this._context.pages().filter(p => !p.isClosed());
-    this._page = pages.length > 0 ? pages[pages.length - 1] : await this._context.newPage();
+    if (pages.length > 1) {
+      for (let i = 0; i < pages.length - 1; i++) {
+        try { await pages[i].close(); } catch {}
+      }
+    }
+    const finalPages = this._context.pages().filter(p => !p.isClosed());
+    this._page = finalPages.length > 0 ? finalPages[finalPages.length - 1] : await this._context.newPage();
     this._page.setDefaultNavigationTimeout(config.browser.navigationTimeout || 30000);
     this._page.setDefaultTimeout(config.browser.navigationTimeout || 30000);
 
@@ -229,11 +237,23 @@ class BrowserRuntime {
    */
   async ensureReady() {
     if (this._context && this._browser && this._browser.isConnected()) {
-      const active = this.getActivePage();
-      if (active && !active.isClosed()) {
+      const pages = this._context.pages().filter(p => !p.isClosed());
+      if (pages.length > 1) {
+        const active = pages[pages.length - 1];
+        for (let i = 0; i < pages.length - 1; i++) {
+          try { await pages[i].close(); } catch {}
+        }
+        this._page = active;
+      } else if (pages.length === 1) {
+        this._page = pages[0];
+      } else {
+        this._page = await this._context.newPage();
+      }
+
+      if (this._page && !this._page.isClosed()) {
         try {
-          await active.bringToFront().catch(() => {});
-          return active;
+          await this._page.bringToFront().catch(() => {});
+          return this._page;
         } catch {}
       }
     }
