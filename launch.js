@@ -8,13 +8,16 @@ const electronBinary = path.join(rootDir, 'node_modules', 'electron', 'dist', 'e
 const mainScript = path.join(rootDir, 'electron', 'main.js');
 const serverScript = path.join(rootDir, 'backend', 'src', 'server.js');
 
+const http = require('http');
+
 async function isServerRunning() {
-  try {
-    const res = await fetch('http://localhost:3000/api/agent/tasks', { signal: AbortSignal.timeout(1500) });
-    return res.ok;
-  } catch {
-    return false;
-  }
+  return new Promise((resolve) => {
+    const req = http.get('http://127.0.0.1:3000/api/health', { timeout: 1000 }, (res) => {
+      resolve(res.statusCode === 200 || res.statusCode === 404);
+    });
+    req.on('error', () => resolve(false));
+    req.on('timeout', () => { req.destroy(); resolve(false); });
+  });
 }
 
 let globalServerProc = null;

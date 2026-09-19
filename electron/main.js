@@ -38,7 +38,7 @@ let backendProcess = null;
 
 async function isBackendRunning() {
   return new Promise((resolve) => {
-    const req = http.get('http://localhost:3000/api/health', { timeout: 1000 }, (res) => {
+    const req = http.get('http://127.0.0.1:3000/api/health', { timeout: 1000 }, (res) => {
       resolve(res.statusCode === 200 || res.statusCode === 404);
     });
     req.on('error', () => resolve(false));

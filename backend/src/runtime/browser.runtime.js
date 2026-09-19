@@ -55,12 +55,19 @@ class BrowserRuntime {
     }
 
 
-    // ── Clean stale locks in both dirs ───────────────────────────────────────
-    for (const d of [chromiumDataDir, chromeDataDir]) {
-      for (const f of ['SingletonLock', 'SingletonCookie', 'lockfile']) {
-        try { fs.unlinkSync(path.join(d, f)); } catch {}
-      }
-    }
+    // ── Helper to clean all lock files in a directory ───────────────────────
+    const cleanLocks = (dir) => {
+      try {
+        const lockNames = ['SingletonLock', 'SingletonCookie', 'SingletonSocket', 'lockfile'];
+        for (const item of lockNames) {
+          try { fs.unlinkSync(path.join(dir, item)); } catch {}
+          try { fs.unlinkSync(path.join(dir, 'Default', item)); } catch {}
+        }
+      } catch {}
+    };
+
+    cleanLocks(chromiumDataDir);
+    cleanLocks(chromeDataDir);
 
     // ── Common launch args ────────────────────────────────────────────────────
     const extraArgs = [
@@ -83,20 +90,28 @@ class BrowserRuntime {
     const tried = [];
     let usedDataDir = chromiumDataDir;
 
-    // ── Strategy 1: Playwright's bundled Chromium (PRIMARY) ──────────────────
-    // ✅ Always available  ✅ Always opens a visible window
-    // ✅ Zero conflict with running Chrome  ✅ CDP works perfectly
-    // Only downside: doesn't share Chrome saved logins (can log in during tasks)
+    // ── Strategy 1: Playwright Bundled Chromium into LocalAppData ────────────
     try {
       this._context = await chromium.launchPersistentContext(chromiumDataDir, { ...baseOpts });
-      console.log('[BrowserRuntime] ✓ Launched Playwright Chromium (primary, guaranteed visible).');
+      console.log('[BrowserRuntime] ✓ Launched Playwright Chromium (persistent profile).');
     } catch (e) {
-      tried.push(`Bundled Chromium: ${e.message.split('\n')[0]}`);
-      console.warn('[BrowserRuntime] Chromium failed:', e.message.split('\n')[0]);
+      tried.push(`Bundled Chromium (persistent): ${e.message.split('\n')[0]}`);
+      cleanLocks(chromiumDataDir);
     }
 
-    // ── Strategy 2: Real Google Chrome via executablePath ────────────────────
-    // Used only if Chromium failed. Shares user's Chrome profile & saved logins.
+    // ── Strategy 2: Bundled Chromium with Fresh Profile (if ProcessSingleton locked)
+    if (!this._context) {
+      const freshDataDir = `${chromiumDataDir}-${Date.now()}`;
+      try {
+        this._context = await chromium.launchPersistentContext(freshDataDir, { ...baseOpts });
+        usedDataDir = freshDataDir;
+        console.log('[BrowserRuntime] ✓ Launched Playwright Chromium (fresh profile fallback).');
+      } catch (e) {
+        tried.push(`Bundled Chromium (fresh profile): ${e.message.split('\n')[0]}`);
+      }
+    }
+
+    // ── Strategy 3: Real Google Chrome via executablePath ────────────────────
     if (!this._context) {
       usedDataDir = chromeDataDir;
       const chromeExe = [
@@ -109,6 +124,7 @@ class BrowserRuntime {
 
       if (chromeExe) {
         try {
+          cleanLocks(chromeDataDir);
           this._context = await chromium.launchPersistentContext(chromeDataDir, {
             ...baseOpts,
             executablePath: chromeExe,
@@ -116,23 +132,22 @@ class BrowserRuntime {
           console.log(`[BrowserRuntime] ✓ Launched Google Chrome fallback: ${chromeExe}`);
         } catch (e) {
           tried.push(`Chrome executablePath: ${e.message.split('\n')[0]}`);
-          console.warn('[BrowserRuntime] Chrome failed:', e.message.split('\n')[0]);
         }
       }
     }
 
-    // ── Strategy 3: Playwright channel:'chrome' (last resort) ────────────────
+    // ── Strategy 4: Standard Non-Persistent chromium.launch (100% Guaranteed Fail-Safe)
+    // Never fails due to profile locks, always creates a fresh top-level OS window
     if (!this._context) {
-      usedDataDir = chromeDataDir;
       try {
-        this._context = await chromium.launchPersistentContext(chromeDataDir, {
-          ...baseOpts, channel: 'chrome',
-        });
-        console.log('[BrowserRuntime] ✓ Launched Chrome via Playwright channel (last resort).');
+        this._browser = await chromium.launch({ ...baseOpts });
+        this._context = await this._browser.newContext({ viewport: null });
+        usedDataDir = 'ephemeral-session';
+        console.log('[BrowserRuntime] ✓ Launched Playwright Chromium (standard fail-safe).');
       } catch (e) {
-        tried.push(`Chrome channel: ${e.message.split('\n')[0]}`);
+        tried.push(`Standard chromium.launch: ${e.message.split('\n')[0]}`);
         throw new Error(
-          `[BrowserRuntime] All launch strategies failed.\n${tried.map((t, i) => `  ${i + 1}. ${t}`).join('\n')}`
+          `[BrowserRuntime] All browser launch strategies failed.\n${tried.map((t, i) => `  ${i + 1}. ${t}`).join('\n')}`
         );
       }
     }
@@ -220,25 +235,20 @@ class BrowserRuntime {
       if (active && !active.isClosed()) {
         try {
           await active.bringToFront().catch(() => {});
+          this._forceWindowVisible(this._usedDataDir).catch(() => {});
           return active;
         } catch {}
       }
     }
 
-    if (this._context) {
-      try {
-        this._page = await this._context.newPage();
-        this._page.setDefaultNavigationTimeout(config.browser.navigationTimeout || 30000);
-        this._page.setDefaultTimeout(config.browser.navigationTimeout || 30000);
-        return this._page;
-      } catch {
-        this._context = null;
-        this._page = null;
-        this._launched = false;
-      }
-    }
-
+    // If context died or has no active pages, cleanly re-launch a fresh visible window
+    try {
+      if (this._context) await this._context.close().catch(() => {});
+    } catch {}
+    this._context = null;
+    this._page = null;
     this._launched = false;
+
     await this.launch();
     return this.getActivePage() || this._page;
   }
