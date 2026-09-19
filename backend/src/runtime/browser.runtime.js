@@ -56,7 +56,7 @@ class BrowserRuntime {
    * Safe to call even if already launched (returns existing).
    */
   async launch() {
-    if (this._launched && this._browser && this._browser.isConnected() && this._context && this._page && !this._page.isClosed()) {
+    if (this._launched && this._context && this._page && !this._page.isClosed()) {
       try {
         await this._page.bringToFront().catch(() => {});
         this._forceWindowVisible().catch(() => {});
@@ -65,15 +65,15 @@ class BrowserRuntime {
     }
 
     // Clean up any stale handles first
-    if (this._context || this._browser) {
+    if (this._context) {
       try { await this.close(); } catch {}
     }
 
     const os = require('os');
     const baseLocalDir = process.env.LOCALAPPDATA || os.tmpdir();
     const appDir = path.join(baseLocalDir, 'NexusCopilot');
-    if (!fs.existsSync(appDir)) fs.mkdirSync(appDir, { recursive: true });
-    const stateFile = path.join(appDir, 'storage-state.json');
+    const profileDir = path.join(appDir, 'UserProfile');
+    if (!fs.existsSync(profileDir)) fs.mkdirSync(profileDir, { recursive: true });
 
     // ── Common launch args ────────────────────────────────────────────────────
     const extraArgs = [
@@ -98,24 +98,25 @@ class BrowserRuntime {
     const baseOpts = {
       headless: false,
       args: extraArgs,
+      viewport: null,
       slowMo: config.browser.slowMo || 0,
     };
 
     const tried = [];
 
-    // ── Strategy 1: Real Google Chrome via channel:'chrome' (PRIMARY) ─────────
+    // ── Strategy 1: Real Google Chrome Persistent Context (PRIMARY) ─────────
     try {
-      this._browser = await chromium.launch({
+      this._context = await chromium.launchPersistentContext(profileDir, {
         ...baseOpts,
         channel: 'chrome',
       });
-      console.log('[BrowserRuntime] ✓ Launched Google Chrome (primary).');
+      console.log('[BrowserRuntime] ✓ Launched Google Chrome with Persistent Profile.');
     } catch (e) {
       tried.push(`Chrome channel: ${e.message.split('\n')[0]}`);
     }
 
     // ── Strategy 2: Real Google Chrome via explicit executablePath ───────────
-    if (!this._browser) {
+    if (!this._context) {
       const chromeExe = [
         'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
         'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
@@ -126,7 +127,7 @@ class BrowserRuntime {
 
       if (chromeExe) {
         try {
-          this._browser = await chromium.launch({
+          this._context = await chromium.launchPersistentContext(profileDir, {
             ...baseOpts,
             executablePath: chromeExe,
           });
@@ -137,10 +138,12 @@ class BrowserRuntime {
       }
     }
 
-    // ── Strategy 3: Bundled Playwright Chromium ──────────────────────────────
-    if (!this._browser) {
+    // ── Strategy 3: Bundled Playwright Chromium Persistent Context ──────────
+    if (!this._context) {
       try {
-        this._browser = await chromium.launch({ ...baseOpts });
+        this._context = await chromium.launchPersistentContext(profileDir, {
+          ...baseOpts,
+        });
         console.log('[BrowserRuntime] ✓ Launched Playwright Chromium fallback.');
       } catch (e) {
         tried.push(`Bundled Chromium: ${e.message.split('\n')[0]}`);
@@ -149,13 +152,6 @@ class BrowserRuntime {
         );
       }
     }
-
-    // Create context with preserved storage state if exists
-    const hasState = fs.existsSync(stateFile);
-    this._context = await this._browser.newContext({
-      viewport: null,
-      storageState: hasState ? stateFile : undefined,
-    });
 
     this._context.on('close', () => {
       this._launched = false;
@@ -236,7 +232,7 @@ class BrowserRuntime {
    * If closed or crashed, automatically re-launches without throwing.
    */
   async ensureReady() {
-    if (this._context && this._browser && this._browser.isConnected()) {
+    if (this._context) {
       const pages = this._context.pages().filter(p => !p.isClosed());
       if (pages.length > 1) {
         const active = pages[pages.length - 1];
@@ -261,10 +257,8 @@ class BrowserRuntime {
     // If context died or has no active pages, cleanly re-launch a fresh visible window
     try {
       if (this._context) await this._context.close().catch(() => {});
-      if (this._browser) await this._browser.close().catch(() => {});
     } catch {}
     this._context = null;
-    this._browser = null;
     this._page = null;
     this._launched = false;
 
@@ -280,10 +274,8 @@ class BrowserRuntime {
     try {
       await this.saveStorageState().catch(() => {});
       if (this._context) await this._context.close().catch(() => {});
-      if (this._browser) await this._browser.close().catch(() => {});
     } finally {
       this._context = null;
-      this._browser = null;
       this._page = null;
       this._launched = false;
       console.log('[BrowserRuntime] Closed.');

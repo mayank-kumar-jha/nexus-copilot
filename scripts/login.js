@@ -3,16 +3,16 @@
 /**
  * Nexus Persistent Login Helper
  *
- * Launches the official Chrome browser instance in interactive mode.
- * Opens ChatGPT and Google so you can log into your accounts directly.
- * Auto-saves cookies, local storage, and auth tokens every 3 seconds
- * and on window close to: %LOCALAPPDATA%\NexusCopilot\storage-state.json
+ * Launches the official Chrome browser instance using the native persistent profile:
+ * %LOCALAPPDATA%\NexusCopilot\UserProfile
+ *
+ * Auto-saves cookies, SQLite databases, IndexedDB, local storage, and auth tokens.
  */
 
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
-const { execFile } = require('child_process');
+const { execFile, execSync } = require('child_process');
 
 let chromium;
 try {
@@ -33,16 +33,17 @@ async function main() {
 
   const baseLocalDir = process.env.LOCALAPPDATA || os.tmpdir();
   const appDir = path.join(baseLocalDir, 'NexusCopilot');
-  if (!fs.existsSync(appDir)) fs.mkdirSync(appDir, { recursive: true });
+  const profileDir = path.join(appDir, 'UserProfile');
   const stateFile = path.join(appDir, 'storage-state.json');
 
-  console.log(`[LoginTool] Storage file: ${stateFile}`);
-  const hasExistingState = fs.existsSync(stateFile);
-  if (hasExistingState) {
-    console.log('[LoginTool] Existing session found. Loading saved logins...');
-  } else {
-    console.log('[LoginTool] Starting fresh session...');
-  }
+  if (!fs.existsSync(profileDir)) fs.mkdirSync(profileDir, { recursive: true });
+
+  console.log(`[LoginTool] Persistent User Profile: ${profileDir}`);
+
+  // Kill any dangling chrome processes using this profile
+  try {
+    execSync('powershell.exe -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like \'*nexus-agent-browser*\' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"', { stdio: 'ignore' });
+  } catch {}
 
   const extraArgs = [
     '--nexus-agent-browser',
@@ -52,28 +53,26 @@ async function main() {
     '--disable-blink-features=AutomationControlled',
   ];
 
-  let browser;
+  let context;
   try {
-    browser = await chromium.launch({
+    context = await chromium.launchPersistentContext(profileDir, {
       headless: false,
       channel: 'chrome',
+      viewport: null,
       args: extraArgs,
     });
-    console.log('[LoginTool] ✓ Google Chrome launched.');
+    console.log('[LoginTool] ✓ Google Chrome launched with Persistent User Profile.');
   } catch {
-    browser = await chromium.launch({
+    context = await chromium.launchPersistentContext(profileDir, {
       headless: false,
+      viewport: null,
       args: extraArgs,
     });
-    console.log('[LoginTool] ✓ Chromium launched.');
+    console.log('[LoginTool] ✓ Chromium launched with Persistent User Profile.');
   }
 
-  const context = await browser.newContext({
-    viewport: null,
-    storageState: hasExistingState ? stateFile : undefined,
-  });
-
-  const page = await context.newPage();
+  const pages = context.pages();
+  const page = pages.length > 0 ? pages[0] : await context.newPage();
   await page.goto('https://chatgpt.com').catch(() => {});
 
   // Bring window to foreground
@@ -88,7 +87,6 @@ async function main() {
 
   console.log('\n[LoginTool] Chrome window is OPEN on your screen!');
   console.log('👉 Please log into ChatGPT, Google, GitHub, or any other accounts in the opened browser.');
-  console.log('👉 Your session is being automatically saved every 3 seconds.');
   console.log('👉 When you are done, simply close the Chrome browser window.\n');
 
   let isClosed = false;
@@ -100,7 +98,7 @@ async function main() {
     } catch {}
   }
 
-  // Periodic auto-save every 3 seconds
+  // Periodic auto-save storage-state backup every 3 seconds
   const autoSaveTimer = setInterval(async () => {
     await saveState();
   }, 3000);
@@ -112,18 +110,12 @@ async function main() {
       clearInterval(autoSaveTimer);
       resolve();
     });
-
-    browser.on('disconnected', () => {
-      isClosed = true;
-      clearInterval(autoSaveTimer);
-      resolve();
-    });
   });
 
-  console.log('[LoginTool] Browser closed. Performing final session save...');
+  console.log('[LoginTool] Browser closed.');
   try {
     await saveState();
-    console.log(`[LoginTool] ✓ All logins permanently saved to: ${stateFile}`);
+    console.log(`[LoginTool] ✓ Session profile saved to: ${profileDir}`);
   } catch {}
 
   console.log('[LoginTool] Done! Nexus Copilot will now automatically use your logins.');
